@@ -1,0 +1,17 @@
+{
+  "name": "ncet-paper-tracker",
+  "version": "1.0.0",
+  "description": "NCET Previous Year Paper Tracker - MERN Stack Application",
+  "scripts": {
+    "dev": "node start.js",
+    "start": "node start.js"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "pg": "^8.20.0"
+  }
+}
