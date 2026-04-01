@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
 import axios from 'axios'
 
-export default function SubjectDetail() {
-  const { id } = useParams()
+export default function SubjectDetail({ navigate, id }) {
   const [subject, setSubject] = useState(null)
   const [papers, setPapers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -26,9 +24,7 @@ export default function SubjectDetail() {
     }
   }
 
-  useEffect(() => {
-    fetchData()
-  }, [id])
+  useEffect(() => { fetchData() }, [id])
 
   const handleAddPaper = async (e) => {
     e.preventDefault()
@@ -54,21 +50,19 @@ export default function SubjectDetail() {
   }
 
   if (loading) return <div className="loading"><div className="spinner"></div><p>Loading...</p></div>
-  if (!subject) return <div className="empty-state"><h3>Subject not found</h3><Link to="/subjects">Back to Subjects</Link></div>
+  if (!subject) return <div className="empty-state"><h3>Subject not found</h3><button onClick={() => navigate('subjects')} className="btn btn-outline">Back to Subjects</button></div>
 
   return (
     <div>
       <div style={{ marginBottom: '1.5rem' }}>
-        <Link to="/subjects" style={{ color: '#2b6cb0', textDecoration: 'none', fontSize: '0.9rem' }}>
+        <button onClick={() => navigate('subjects')} style={{ color: '#2b6cb0', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem' }}>
           ← Back to Subjects
-        </Link>
+        </button>
       </div>
 
-      <div className="card" style={{ marginBottom: '1.5rem', padding: '0' }}>
+      <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div className="card-body" style={{ padding: '1.5rem' }}>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: '#1a365d', marginBottom: '0.75rem' }}>
-            {subject.name}
-          </h1>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: '#1a365d', marginBottom: '0.75rem' }}>{subject.name}</h1>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {subject.code && <span className="badge badge-blue">{subject.code}</span>}
             {subject.semester && <span className="badge badge-green">Semester {subject.semester}</span>}
@@ -103,10 +97,8 @@ export default function SubjectDetail() {
                 <h3>{paper.year} — {paper.exam_type} Exam</h3>
                 {paper.description && <div className="paper-meta">{paper.description}</div>}
                 {paper.file_url && (
-                  <div className="paper-meta" style={{ marginTop: '0.3rem' }}>
-                    <a href={paper.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm" style={{ marginTop: '0.25rem' }}>
-                      📄 Download Paper
-                    </a>
+                  <div style={{ marginTop: '0.3rem' }}>
+                    <a href={paper.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">📄 Download Paper</a>
                   </div>
                 )}
               </div>

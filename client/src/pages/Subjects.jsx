@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
 import axios from 'axios'
 
-export default function Subjects() {
+export default function Subjects({ navigate }) {
   const [subjects, setSubjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [semester, setSemester] = useState('')
@@ -15,22 +14,16 @@ export default function Subjects() {
     const params = {}
     if (semester) params.semester = semester
     if (branch) params.branch = branch
-    axios.get('/api/subjects', { params }).then(res => {
-      setSubjects(res.data)
-    }).catch(console.error).finally(() => setLoading(false))
+    axios.get('/api/subjects', { params }).then(res => setSubjects(res.data))
+      .catch(console.error).finally(() => setLoading(false))
   }
 
-  useEffect(() => {
-    fetchSubjects()
-  }, [semester, branch])
+  useEffect(() => { fetchSubjects() }, [semester, branch])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
-      await axios.post('/api/subjects', {
-        ...form,
-        semester: parseInt(form.semester) || null
-      })
+      await axios.post('/api/subjects', { ...form, semester: parseInt(form.semester) || null })
       setMessage({ type: 'success', text: 'Subject added successfully!' })
       setShowModal(false)
       setForm({ name: '', code: '', semester: '', branch: '' })
@@ -69,10 +62,7 @@ export default function Subjects() {
       </div>
 
       {loading ? (
-        <div className="loading">
-          <div className="spinner"></div>
-          <p>Loading subjects...</p>
-        </div>
+        <div className="loading"><div className="spinner"></div><p>Loading subjects...</p></div>
       ) : subjects.length === 0 ? (
         <div className="empty-state">
           <h3>No subjects found</h3>
@@ -89,7 +79,7 @@ export default function Subjects() {
                   {subject.semester && <span className="badge badge-green">Sem {subject.semester}</span>}
                   {subject.branch && <span className="badge badge-gray">{subject.branch}</span>}
                 </div>
-                <Link to={`/subjects/${subject.id}`} className="btn btn-outline btn-sm">View Papers</Link>
+                <button onClick={() => navigate('subject', { id: subject.id })} className="btn btn-outline btn-sm">View Papers</button>
               </div>
             </div>
           ))}

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
 import axios from 'axios'
 
-export default function Home() {
+export default function Home({ navigate }) {
   const [stats, setStats] = useState(null)
   const [recentPapers, setRecentPapers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -14,18 +13,12 @@ export default function Home() {
     ]).then(([statsRes, papersRes]) => {
       setStats(statsRes.data)
       setRecentPapers(papersRes.data.slice(0, 6))
-    }).catch(err => {
-      console.error(err)
-    }).finally(() => setLoading(false))
+    }).catch(err => console.error(err))
+      .finally(() => setLoading(false))
   }, [])
 
   if (loading) {
-    return (
-      <div className="loading">
-        <div className="spinner"></div>
-        <p>Loading...</p>
-      </div>
-    )
+    return <div className="loading"><div className="spinner"></div><p>Loading...</p></div>
   }
 
   return (
@@ -34,8 +27,8 @@ export default function Home() {
         <h1>NCET Previous Year Papers</h1>
         <p>Access and download previous year question papers for all subjects at NCET. Browse by subject, semester, or year.</p>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Link to="/papers" className="btn btn-primary">Browse Papers</Link>
-          <Link to="/subjects" className="btn btn-outline" style={{ background: 'rgba(255,255,255,0.15)', color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}>View Subjects</Link>
+          <button onClick={() => navigate('papers')} className="btn btn-primary">Browse Papers</button>
+          <button onClick={() => navigate('subjects')} className="btn btn-outline" style={{ background: 'rgba(255,255,255,0.15)', color: 'white', borderColor: 'rgba(255,255,255,0.5)' }}>View Subjects</button>
         </div>
       </div>
 
@@ -59,7 +52,7 @@ export default function Home() {
       <div style={{ marginBottom: '1.5rem' }}>
         <div className="page-header">
           <span className="section-title">Recent Papers</span>
-          <Link to="/papers" className="btn btn-outline btn-sm">View All</Link>
+          <button onClick={() => navigate('papers')} className="btn btn-outline btn-sm">View All</button>
         </div>
 
         {recentPapers.length === 0 ? (
@@ -75,16 +68,14 @@ export default function Home() {
                   <h3>{paper.subject_name}</h3>
                   <div className="paper-meta">
                     <span className="badge badge-blue">{paper.year}</span>
-                    {' '}
-                    <span className="badge badge-gray">{paper.exam_type}</span>
-                    {' '}
-                    Semester {paper.semester} &bull; {paper.branch}
+                    {' '}<span className="badge badge-gray">{paper.exam_type}</span>
+                    {' '}Semester {paper.semester} &bull; {paper.branch}
                   </div>
                   {paper.description && <div className="paper-meta" style={{ marginTop: '0.25rem' }}>{paper.description}</div>}
                 </div>
-                <Link to={`/subjects/${paper.subject_id}`} className="btn btn-outline btn-sm">
+                <button onClick={() => navigate('subject', { id: paper.subject_id })} className="btn btn-outline btn-sm">
                   View Subject
-                </Link>
+                </button>
               </div>
             ))}
           </div>
