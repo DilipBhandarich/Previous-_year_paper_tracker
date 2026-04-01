@@ -1,15 +1,22 @@
-const { spawn } = require('child_process');
-const path = require('path');
+const { spawn, execSync } = require('child_process');
 
-// Start the main server — it will listen on both port 3000 (primary external)
-// and port 5000 (canvas preview), matching the .replit port config
-const proc = spawn('node', ['server/serve.js'], {
-  cwd: __dirname,
-  stdio: 'inherit',
-  shell: false,
-  env: { ...process.env }
-});
+// Kill anything already on port 5000 before starting
+try {
+  execSync('fuser -k 5000/tcp 2>/dev/null || true', { shell: true });
+} catch (_) {}
 
-proc.on('error', (err) => console.error('Error:', err.message));
-proc.on('close', (code) => { if (code !== null && code !== 0) console.log('Server exited with code', code); });
-process.on('SIGTERM', () => { proc.kill(); process.exit(0); });
+// Small delay to let the OS reclaim the port
+setTimeout(() => {
+  const proc = spawn('node', ['server/serve.js'], {
+    cwd: __dirname,
+    stdio: 'inherit',
+    shell: false,
+    env: { ...process.env }
+  });
+
+  proc.on('error', (err) => console.error('Startup error:', err.message));
+  proc.on('close', (code) => {
+    if (code !== null && code !== 0) console.log('Server exited with code', code);
+  });
+  process.on('SIGTERM', () => { proc.kill(); process.exit(0); });
+}, 500);
