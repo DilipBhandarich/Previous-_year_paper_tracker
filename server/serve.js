@@ -174,7 +174,14 @@ app.get('*', (req, res) => {
 });
 
 initDb().then(() => {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Production server running on port ${PORT}`);
+  // Listen on port 5000 (workflow waitForPort) and port 3000 (first entry in
+  // .replit [[ports]] externalPort=80 mapping) so all Replit routing works
+  const ports = [5000, 3000];
+  ports.forEach((p) => {
+    app.listen(p, '0.0.0.0', () => {
+      console.log(`Server listening on port ${p}`);
+    }).on('error', (err) => {
+      if (err.code !== 'EADDRINUSE') console.error(`Port ${p} error:`, err.message);
+    });
   });
 });

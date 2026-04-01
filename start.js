@@ -1,8 +1,8 @@
 const { spawn, execSync } = require('child_process');
 
-// Kill anything already on port 5000 before starting
+// Kill anything already on ports 3000 and 5000 before starting
 try {
-  execSync('fuser -k 5000/tcp 2>/dev/null || true', { shell: true });
+  execSync('fuser -k 3000/tcp 5000/tcp 2>/dev/null || true', { shell: true });
 } catch (_) {}
 
 // Small delay to let the OS reclaim the port
