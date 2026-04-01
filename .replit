@@ -40,4 +40,4 @@ outputType = "webview"
 [deployment]
 deploymentTarget = "autoscale"
 run = ["node", "server/serve.js"]
-build = ["bash", "-c", "cd client && npm run build"]
+build = ["bash", "-c", "npm install && cd client && npm install && npm run build"]
