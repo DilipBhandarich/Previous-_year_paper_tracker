@@ -166,6 +166,9 @@ app.use(express.static(path.join(__dirname, '../client/dist'), {
   }
 }));
 app.get('*', (req, res) => {
+  if (req.path.startsWith('/__replco') || req.path.startsWith('/__repl')) {
+    return res.status(404).send('Not found');
+  }
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, '../client/dist', 'index.html'));
 });
