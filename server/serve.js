@@ -1,74 +1,71 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode') ? undefined : false
-});
+const supabase = createClient(
+  process.env.VITE_SUPABASE_URL,
+  process.env.VITE_SUPABASE_ANON_KEY
+);
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 app.use(express.json());
 
 async function initDb() {
-  const client = await pool.connect();
   try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS subjects (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        code VARCHAR(50),
-        semester INTEGER,
-        branch VARCHAR(100),
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS papers (
-        id SERIAL PRIMARY KEY,
-        subject_id INTEGER REFERENCES subjects(id) ON DELETE CASCADE,
-        year INTEGER NOT NULL,
-        exam_type VARCHAR(50) DEFAULT 'Annual',
-        description TEXT,
-        file_url TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    const { rows } = await client.query('SELECT COUNT(*) FROM subjects');
-    if (parseInt(rows[0].count) === 0) {
-      await client.query(`
-        INSERT INTO subjects (name, code, semester, branch) VALUES
-        ('Engineering Mathematics I', 'MATH101', 1, 'Common'),
-        ('Engineering Physics', 'PHY101', 1, 'Common'),
-        ('Engineering Chemistry', 'CHEM101', 1, 'Common'),
-        ('Computer Science Fundamentals', 'CS101', 2, 'CSE'),
-        ('Data Structures', 'CS201', 3, 'CSE'),
-        ('Database Management Systems', 'CS301', 4, 'CSE'),
-        ('Operating Systems', 'CS401', 5, 'CSE'),
-        ('Computer Networks', 'CS402', 5, 'CSE'),
-        ('Software Engineering', 'CS501', 6, 'CSE'),
-        ('Compiler Design', 'CS502', 6, 'CSE')
-      `);
-      const { rows: subjects } = await client.query('SELECT id FROM subjects LIMIT 3');
-      for (const subject of subjects) {
-        for (const year of [2021, 2022, 2023]) {
-          await client.query(
-            'INSERT INTO papers (subject_id, year, exam_type, description) VALUES ($1, $2, $3, $4)',
-            [subject.id, year, 'Annual', `${year} Annual Examination Paper`]
-          );
-        }
+    const { data: existingSubjects, error: checkError } = await supabase
+      .from('subjects')
+      .select('id')
+      .limit(1);
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      throw checkError;
+    }
+
+    if (!existingSubjects || existingSubjects.length === 0) {
+      const subjectsData = [
+        { name: 'Engineering Mathematics I', code: 'MATH101', semester: 1, branch: 'Common' },
+        { name: 'Engineering Physics', code: 'PHY101', semester: 1, branch: 'Common' },
+        { name: 'Engineering Chemistry', code: 'CHEM101', semester: 1, branch: 'Common' },
+        { name: 'Computer Science Fundamentals', code: 'CS101', semester: 2, branch: 'CSE' },
+        { name: 'Data Structures', code: 'CS201', semester: 3, branch: 'CSE' },
+        { name: 'Database Management Systems', code: 'CS301', semester: 4, branch: 'CSE' },
+        { name: 'Operating Systems', code: 'CS401', semester: 5, branch: 'CSE' },
+        { name: 'Computer Networks', code: 'CS402', semester: 5, branch: 'CSE' },
+        { name: 'Software Engineering', code: 'CS501', semester: 6, branch: 'CSE' },
+        { name: 'Compiler Design', code: 'CS502', semester: 6, branch: 'CSE' }
+      ];
+
+      const { data: insertedSubjects, error: insertError } = await supabase
+        .from('subjects')
+        .insert(subjectsData)
+        .select();
+
+      if (insertError) throw insertError;
+
+      for (const subject of insertedSubjects.slice(0, 3)) {
+        const papersData = [2021, 2022, 2023].map(year => ({
+          subject_id: subject.id,
+          year,
+          exam_type: 'Annual',
+          description: `${year} Annual Examination Paper`
+        }));
+
+        const { error: paperError } = await supabase
+          .from('papers')
+          .insert(papersData);
+
+        if (paperError) throw paperError;
       }
     }
+
     console.log('Database initialized successfully');
   } catch (err) {
     console.error('DB init error:', err.message);
-  } finally {
-    client.release();
   }
 }
 
@@ -77,22 +74,25 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'NCET Pap
 app.get('/api/subjects', async (req, res) => {
   try {
     const { semester, branch } = req.query;
-    let query = 'SELECT * FROM subjects';
-    const params = [], conditions = [];
-    if (semester) { params.push(parseInt(semester)); conditions.push(`semester = $${params.length}`); }
-    if (branch) { params.push(branch); conditions.push(`branch = $${params.length}`); }
-    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY semester, name';
-    const { rows } = await pool.query(query, params);
-    res.json(rows);
+    let query = supabase.from('subjects').select('*');
+    if (semester) query = query.eq('semester', parseInt(semester));
+    if (branch) query = query.eq('branch', branch);
+    const { data, error } = await query.order('semester').order('name');
+    if (error) throw error;
+    res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/subjects/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM subjects WHERE id = $1', [req.params.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Subject not found' });
-    res.json(rows[0]);
+    const { data, error } = await supabase
+      .from('subjects')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Subject not found' });
+    res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -100,31 +100,39 @@ app.post('/api/subjects', async (req, res) => {
   try {
     const { name, code, semester, branch } = req.body;
     if (!name) return res.status(400).json({ error: 'Subject name is required' });
-    const { rows } = await pool.query('INSERT INTO subjects (name, code, semester, branch) VALUES ($1, $2, $3, $4) RETURNING *', [name, code, semester, branch]);
-    res.status(201).json(rows[0]);
+    const { data, error } = await supabase
+      .from('subjects')
+      .insert([{ name, code, semester, branch }])
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/papers', async (req, res) => {
   try {
     const { subject_id, year, exam_type } = req.query;
-    let query = `SELECT p.*, s.name as subject_name, s.code as subject_code, s.semester, s.branch FROM papers p JOIN subjects s ON p.subject_id = s.id`;
-    const params = [], conditions = [];
-    if (subject_id) { params.push(parseInt(subject_id)); conditions.push(`p.subject_id = $${params.length}`); }
-    if (year) { params.push(parseInt(year)); conditions.push(`p.year = $${params.length}`); }
-    if (exam_type) { params.push(exam_type); conditions.push(`p.exam_type = $${params.length}`); }
-    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' ORDER BY p.year DESC, s.name';
-    const { rows } = await pool.query(query, params);
-    res.json(rows);
+    let query = supabase.from('papers').select('*, subjects(name, code, semester, branch)');
+    if (subject_id) query = query.eq('subject_id', parseInt(subject_id));
+    if (year) query = query.eq('year', parseInt(year));
+    if (exam_type) query = query.eq('exam_type', exam_type);
+    const { data, error } = await query.order('year', { ascending: false }).order('subjects(name)');
+    if (error) throw error;
+    res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/papers/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query(`SELECT p.*, s.name as subject_name, s.code as subject_code, s.semester, s.branch FROM papers p JOIN subjects s ON p.subject_id = s.id WHERE p.id = $1`, [req.params.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Paper not found' });
-    res.json(rows[0]);
+    const { data, error } = await supabase
+      .from('papers')
+      .select('*, subjects(name, code, semester, branch)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Paper not found' });
+    res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -132,27 +140,43 @@ app.post('/api/papers', async (req, res) => {
   try {
     const { subject_id, year, exam_type, description, file_url } = req.body;
     if (!subject_id || !year) return res.status(400).json({ error: 'subject_id and year are required' });
-    const { rows } = await pool.query('INSERT INTO papers (subject_id, year, exam_type, description, file_url) VALUES ($1, $2, $3, $4, $5) RETURNING *', [subject_id, year, exam_type || 'Annual', description, file_url]);
-    res.status(201).json(rows[0]);
+    const { data, error } = await supabase
+      .from('papers')
+      .insert([{ subject_id, year, exam_type: exam_type || 'Annual', description, file_url }])
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/papers/:id', async (req, res) => {
   try {
-    const { rowCount } = await pool.query('DELETE FROM papers WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'Paper not found' });
+    const { data, error } = await supabase
+      .from('papers')
+      .delete()
+      .eq('id', req.params.id)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Paper not found' });
     res.json({ message: 'Paper deleted successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/stats', async (req, res) => {
   try {
-    const [subjects, papers, years] = await Promise.all([
-      pool.query('SELECT COUNT(*) FROM subjects'),
-      pool.query('SELECT COUNT(*) FROM papers'),
-      pool.query('SELECT COUNT(DISTINCT year) FROM papers')
+    const [subjectsCount, papersCount, yearsCount] = await Promise.all([
+      supabase.from('subjects').select('*', { count: 'exact', head: true }),
+      supabase.from('papers').select('*', { count: 'exact', head: true }),
+      supabase.from('papers').select('year', { head: true })
     ]);
-    res.json({ totalSubjects: parseInt(subjects.rows[0].count), totalPapers: parseInt(papers.rows[0].count), totalYears: parseInt(years.rows[0].count) });
+    const uniqueYears = await supabase.from('papers').select('year').then(r => new Set(r.data.map(p => p.year)).size);
+    res.json({
+      totalSubjects: subjectsCount.count || 0,
+      totalPapers: papersCount.count || 0,
+      totalYears: uniqueYears
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
