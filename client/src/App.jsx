@@ -1,44 +1,62 @@
-import React, { useState } from 'react'
-import Home from './pages/Home'
-import Subjects from './pages/Subjects'
-import Papers from './pages/Papers'
-import SubjectDetail from './pages/SubjectDetail'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Navbar from './components/Navbar';
+import Landing from './pages/Landing';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+import Subjects from './pages/Subjects';
+import SubjectDetail from './pages/SubjectDetail';
+import Papers from './pages/Papers';
+import Notes from './pages/Notes';
+
+function PrivateRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="loading-screen"><div className="spinner" /></div>;
+  return user ? children : <Navigate to="/login" />;
+}
+
+function PublicRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="loading-screen"><div className="spinner" /></div>;
+  return !user ? children : <Navigate to="/dashboard" />;
+}
+
+function AppRoutes() {
+  const { user } = useAuth();
+  return (
+    <>
+      {user && <Navbar />}
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+        <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+        <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+        <Route path="/subjects" element={<PrivateRoute><Subjects /></PrivateRoute>} />
+        <Route path="/subjects/:id" element={<PrivateRoute><SubjectDetail /></PrivateRoute>} />
+        <Route path="/papers" element={<PrivateRoute><Papers /></PrivateRoute>} />
+        <Route path="/notes" element={<PrivateRoute><Notes /></PrivateRoute>} />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </>
+  );
+}
 
 export default function App() {
-  const [page, setPage] = useState({ name: 'home', params: {} })
-
-  const navigate = (name, params = {}) => setPage({ name, params })
-
-  const renderPage = () => {
-    switch (page.name) {
-      case 'home':     return <Home navigate={navigate} />
-      case 'subjects': return <Subjects navigate={navigate} />
-      case 'subject':  return <SubjectDetail navigate={navigate} id={page.params.id} />
-      case 'papers':   return <Papers navigate={navigate} />
-      default:         return <Home navigate={navigate} />
-    }
-  }
-
   return (
-    <div className="app">
-      <nav className="navbar">
-        <button onClick={() => navigate('home')} className="navbar-brand" style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-          📚 NCET Paper Tracker
-        </button>
-        <ul className="navbar-nav">
-          <li><button onClick={() => navigate('home')} className={page.name === 'home' ? 'active' : ''}>Home</button></li>
-          <li><button onClick={() => navigate('subjects')} className={page.name === 'subjects' || page.name === 'subject' ? 'active' : ''}>Subjects</button></li>
-          <li><button onClick={() => navigate('papers')} className={page.name === 'papers' ? 'active' : ''}>Papers</button></li>
-        </ul>
-      </nav>
-
-      <div className="main-content">
-        {renderPage()}
-      </div>
-
-      <footer>
-        <p>NCET Previous Year Paper Tracker &copy; {new Date().getFullYear()} — All Rights Reserved</p>
-      </footer>
-    </div>
-  )
+    <BrowserRouter>
+      <AuthProvider>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            style: { background: '#1e1b4b', color: '#e0e7ff', border: '1px solid #4338ca', borderRadius: '12px' },
+            success: { iconTheme: { primary: '#6366f1', secondary: '#e0e7ff' } },
+            error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } }
+          }}
+        />
+        <AppRoutes />
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }
