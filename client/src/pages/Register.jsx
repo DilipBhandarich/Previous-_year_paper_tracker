@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -10,8 +10,12 @@ export default function Register() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { register } = useAuth();
+  const { register, user } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) navigate('/dashboard', { replace: true });
+  }, [user]);
 
   const pwStrength = (pw) => {
     let s = 0;
@@ -28,15 +32,19 @@ export default function Register() {
 
   const handle = async (e) => {
     e.preventDefault();
-    if (form.password.length < 6) { setError('Password must be at least 6 characters'); return; }
-    setError(''); setLoading(true);
+    if (form.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+    setError('');
+    setLoading(true);
     try {
       await register(form.name, form.email, form.password);
       toast.success('Account created! Welcome to NCET Papers 🎓');
-      navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.error || 'Registration failed. Please try again.');
-    } finally { setLoading(false); }
+      setLoading(false);
+    }
   };
 
   return (
@@ -51,40 +59,71 @@ export default function Register() {
         <h1 className="auth-title">Create Account</h1>
         <p className="auth-subtitle">Join your batchmates on NCET Paper Tracker</p>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && (
+          <div className="alert alert-error">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handle}>
           <div className="form-group">
             <label className="form-label">Full Name</label>
             <div style={{ position: 'relative' }}>
-              <User size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input type="text" className="form-control" style={{ paddingLeft: '2.5rem' }} placeholder="Your full name"
-                value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
+              <User size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type="text"
+                className="form-control"
+                style={{ paddingLeft: '2.5rem' }}
+                placeholder="Your full name"
+                value={form.name}
+                onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                required
+                autoComplete="name"
+              />
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Email Address</label>
             <div style={{ position: 'relative' }}>
-              <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input type="email" className="form-control" style={{ paddingLeft: '2.5rem' }} placeholder="your@email.com"
-                value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} required />
+              <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type="email"
+                className="form-control"
+                style={{ paddingLeft: '2.5rem' }}
+                placeholder="your@email.com"
+                value={form.email}
+                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                required
+                autoComplete="email"
+              />
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Password</label>
             <div style={{ position: 'relative' }}>
-              <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input type={showPw ? 'text' : 'password'} className="form-control" style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }} placeholder="Min. 6 characters"
-                value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} required />
-              <button type="button" onClick={() => setShowPw(p => !p)}
-                style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+              <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type={showPw ? 'text' : 'password'}
+                className="form-control"
+                style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                placeholder="Min. 6 characters"
+                value={form.password}
+                onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                required
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw(p => !p)}
+                style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
+              >
                 {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
             {form.password && (
               <div style={{ marginTop: '0.5rem' }}>
                 <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
-                  {[1,2,3,4].map(i => (
+                  {[1, 2, 3, 4].map(i => (
                     <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= strength ? strengthColors[strength] : 'var(--border)', transition: 'all 0.2s' }} />
                   ))}
                 </div>
@@ -101,13 +140,19 @@ export default function Register() {
             ))}
           </div>
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.8rem' }} disabled={loading}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center', padding: '0.8rem' }}
+            disabled={loading}
+          >
             {loading ? 'Creating Account...' : <><span>Create Account</span> <ArrowRight size={16} /></>}
           </button>
         </form>
 
         <p className="auth-footer">
-          Already have an account? <Link to="/login" className="auth-link">Sign in</Link>
+          Already have an account?{' '}
+          <Link to="/login" className="auth-link">Sign in</Link>
         </p>
       </motion.div>
     </div>

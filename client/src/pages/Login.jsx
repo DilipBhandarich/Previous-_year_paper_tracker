@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -10,19 +10,24 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) navigate('/dashboard', { replace: true });
+  }, [user]);
 
   const handle = async (e) => {
     e.preventDefault();
-    setError(''); setLoading(true);
+    setError('');
+    setLoading(true);
     try {
       await login(form.email, form.password);
       toast.success('Welcome back! 🎓');
-      navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed. Please try again.');
-    } finally { setLoading(false); }
+      setError(err.response?.data?.error || 'Login failed. Check your credentials and try again.');
+      setLoading(false);
+    }
   };
 
   return (
@@ -37,36 +42,65 @@ export default function Login() {
         <h1 className="auth-title">Welcome Back</h1>
         <p className="auth-subtitle">Sign in to access your papers and AI insights</p>
 
-        {error && <div className="alert alert-error">{error}</div>}
+        {error && (
+          <div className="alert alert-error">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handle}>
           <div className="form-group">
             <label className="form-label">Email Address</label>
             <div style={{ position: 'relative' }}>
-              <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input type="email" className="form-control" style={{ paddingLeft: '2.5rem' }} placeholder="your@email.com"
-                value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} required />
+              <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type="email"
+                className="form-control"
+                style={{ paddingLeft: '2.5rem' }}
+                placeholder="your@email.com"
+                value={form.email}
+                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                required
+                autoComplete="email"
+              />
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Password</label>
             <div style={{ position: 'relative' }}>
-              <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input type={showPw ? 'text' : 'password'} className="form-control" style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }} placeholder="Your password"
-                value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} required />
-              <button type="button" onClick={() => setShowPw(p => !p)}
-                style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+              <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type={showPw ? 'text' : 'password'}
+                className="form-control"
+                style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                placeholder="Your password"
+                value={form.password}
+                onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                required
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPw(p => !p)}
+                style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
+              >
                 {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
           </div>
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.8rem' }} disabled={loading}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: '100%', justifyContent: 'center', padding: '0.8rem', marginTop: '0.5rem' }}
+            disabled={loading}
+          >
             {loading ? 'Signing In...' : <><span>Sign In</span> <ArrowRight size={16} /></>}
           </button>
         </form>
 
         <p className="auth-footer">
-          Don't have an account? <Link to="/register" className="auth-link">Create one free</Link>
+          Don't have an account?{' '}
+          <Link to="/register" className="auth-link">Create one free</Link>
         </p>
       </motion.div>
     </div>
