@@ -367,6 +367,7 @@ async function createSignedUpload(file) {
         apikey: storageKey,
         "Content-Type": "application/json",
       },
+      body: "{}",
     },
   );
   if (!response.ok) {
