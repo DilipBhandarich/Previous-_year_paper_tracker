@@ -1,6 +1,7 @@
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import axios from 'axios';
+import { vi } from 'vitest';
 
 const TestComponent = () => {
   const { user, loading, login, logout } = useAuth();
@@ -21,18 +22,18 @@ const TestComponent = () => {
 
 describe('AuthContext', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     localStorage.clear();
   });
 
-  it('should show loading initially', () => {
+  it('should finish loading when no token exists', async () => {
     localStorage.getItem.mockReturnValue(null);
     render(
       <AuthProvider>
         <TestComponent />
       </AuthProvider>
     );
-    expect(screen.getByText('Loading...')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Login')).toBeInTheDocument());
   });
 
   it('should login successfully', async () => {

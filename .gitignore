@@ -4,3 +4,11 @@ client/node_modules/
 dist/
 .env
 *.log
+coverage/
+server/uploads/
+Video_sequence.zip
+.local/
+db_test.txt
+env_test.txt
+health.txt
+subjects_test.txt

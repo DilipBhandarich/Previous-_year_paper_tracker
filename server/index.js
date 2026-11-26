@@ -7,9 +7,9 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
-const nodemailer = require("nodemailer");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const OpenAI = require("openai");
 require("dotenv").config({
   path: require("path").join(__dirname, "..", ".env"),
@@ -23,52 +23,7 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-const OTP_TTL_MINUTES = parseInt(process.env.OTP_TTL_MINUTES || "10", 10);
-const OTP_MAX_ATTEMPTS = parseInt(process.env.OTP_MAX_ATTEMPTS || "5", 10);
-const OTP_RESEND_COOLDOWN_SECONDS = parseInt(
-  process.env.OTP_RESEND_COOLDOWN_SECONDS || "60",
-  10,
-);
-
 const isEmail = (value) => /.+@.+\..+/.test(String(value || "").trim());
-const makeOtp = () => String(Math.floor(100000 + Math.random() * 900000));
-
-let mailTransporter = null;
-const configureMailer = () => {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || "587", 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const secure =
-    String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-  if (!host || !user || !pass) {
-    console.warn(
-      "SMTP not configured. OTP will be logged to server console for development.",
-    );
-    return;
-  }
-  mailTransporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: { user, pass },
-  });
-};
-
-const sendOtpEmail = async (toEmail, otp) => {
-  if (!mailTransporter) {
-    console.log(`[DEV OTP] ${toEmail} => ${otp}`);
-    return;
-  }
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
-  await mailTransporter.sendMail({
-    from: fromEmail,
-    to: toEmail,
-    subject: "Your NCET Paper Tracker OTP",
-    text: `Your OTP is ${otp}. It will expire in ${OTP_TTL_MINUTES} minutes.`,
-    html: `<p>Your OTP is <b>${otp}</b>.</p><p>This OTP will expire in ${OTP_TTL_MINUTES} minutes.</p>`,
-  });
-};
 
 let openai;
 const normalizeOpenAiBaseUrl = (value) => {
@@ -314,17 +269,10 @@ app.use((req, res, next) => {
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, "uploads");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
+// Files are kept in memory during a request. Vercel's filesystem is ephemeral,
+// so production uploads go to Supabase Storage; local development falls back
+// to server/uploads for convenience.
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024, files: 10 },
@@ -333,9 +281,75 @@ const upload = multer({
     const ext = allowed.test(path.extname(file.originalname).toLowerCase());
     const mime =
       allowed.test(file.mimetype) || file.mimetype === "application/pdf";
-    cb(null, ext && mime);
+    cb(null, ext && mime ? null : new Error("Unsupported file type"));
   },
 });
+
+const storageUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const storageKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const storageBucket = process.env.SUPABASE_STORAGE_BUCKET || "paper-files";
+const hasObjectStorage = Boolean(storageUrl && storageKey);
+
+function safeFileName(value) {
+  return String(value || "file")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "file";
+}
+
+async function storeFile(file) {
+  const objectPath = `papers/${crypto.randomUUID()}-${safeFileName(file.originalname)}`;
+  if (hasObjectStorage) {
+    const response = await fetch(
+      `${storageUrl}/storage/v1/object/${encodeURIComponent(storageBucket)}/${objectPath}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${storageKey}`,
+          apikey: storageKey,
+          "Content-Type": file.mimetype,
+          "x-upsert": "false",
+        },
+        body: file.buffer,
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Storage upload failed (${response.status}): ${detail}`);
+    }
+    return {
+      filename: objectPath,
+      file_url: `${storageUrl}/storage/v1/object/public/${storageBucket}/${objectPath}`,
+    };
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Supabase Storage is not configured for production uploads");
+  }
+  const localName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname).toLowerCase()}`;
+  const dir = path.join(__dirname, "uploads");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, localName), file.buffer);
+  return { filename: localName, file_url: `/uploads/${localName}` };
+}
+
+async function removeStoredFile(filename) {
+  if (!filename) return;
+  if (hasObjectStorage && String(filename).startsWith("papers/")) {
+    await fetch(`${storageUrl}/storage/v1/object/remove`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${storageKey}`,
+        apikey: storageKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ bucketId: storageBucket, prefixes: [filename] }),
+    });
+    return;
+  }
+  const localPath = path.join(__dirname, "uploads", path.basename(filename));
+  if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
+}
 
 const auth = require("./middleware/auth");
 
@@ -370,18 +384,6 @@ async function initDb() {
     )`);
     await client.query(
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE",
-    );
-    await client.query(`CREATE TABLE IF NOT EXISTS email_otps (
-      id SERIAL PRIMARY KEY, email VARCHAR(255) NOT NULL, name VARCHAR(255) NOT NULL,
-      password_hash VARCHAR(255) NOT NULL, otp_hash VARCHAR(255) NOT NULL,
-      attempt_count INTEGER DEFAULT 0, expires_at TIMESTAMP NOT NULL,
-      consumed BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT NOW()
-    )`);
-    await client.query(
-      "ALTER TABLE email_otps ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0",
-    );
-    await client.query(
-      "CREATE INDEX IF NOT EXISTS idx_email_otps_email ON email_otps(email)",
     );
     await client.query(`CREATE TABLE IF NOT EXISTS subjects (
       id SERIAL PRIMARY KEY, name VARCHAR(255) NOT NULL, code VARCHAR(50), semester INTEGER,
@@ -508,209 +510,414 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-app.post("/api/auth/register/request-otp", async (req, res) => {
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const userView = (row) => ({
+  id: row.id,
+  name: row.name,
+  email: row.email,
+  role: row.role,
+  avatar: row.avatar,
+  created_at: row.created_at,
+});
+const intParam = (value, fallback = null) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+function issueToken(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: "7d" },
+  );
+}
+
+async function ownsResource(table, id, user) {
+  if (user?.role === "admin") return true;
+  const result = await pool.query(`SELECT created_by FROM ${table} WHERE id=$1`, [id]);
+  return Boolean(result.rows[0] && result.rows[0].created_by === user?.id);
+}
+
+function parseFiles(req) {
+  return getOrderedUploadFiles(req.files).filter((file) => file?.buffer);
+}
+
+app.post("/api/auth/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const name = String(req.body.name || "").trim();
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || "");
     if (!name || !email || !password)
       return res.status(400).json({ error: "All fields required" });
-    if (!isEmail(email))
-      return res.status(400).json({ error: "Valid email required" });
-    if (String(password).length < 6)
-      return res
-        .status(400)
-        .json({ error: "Password must be at least 6 characters" });
-
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const existing = await pool.query("SELECT id FROM users WHERE email=$1", [
-      normalizedEmail,
-    ]);
-    if (existing.rows.length)
-      return res.status(400).json({ error: "Email already registered" });
-
-    const { rows: latestOtpRows } = await pool.query(
-      `SELECT GREATEST(EXTRACT(EPOCH FROM ((created_at + ($2::text || ' seconds')::interval) - NOW())), 0)::INT AS wait_seconds
-       FROM email_otps WHERE email=$1 AND consumed=FALSE ORDER BY created_at DESC LIMIT 1`,
-      [normalizedEmail, OTP_RESEND_COOLDOWN_SECONDS],
+    if (!isEmail(email)) return res.status(400).json({ error: "Valid email required" });
+    if (password.length < 6)
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    const existing = await pool.query("SELECT id FROM users WHERE email=$1", [email]);
+    if (existing.rows.length) return res.status(400).json({ error: "Email already registered" });
+    const passwordHash = await bcrypt.hash(password, 12);
+    const { rows } = await pool.query(
+      `INSERT INTO users (name,email,password,email_verified,role,avatar)
+       VALUES ($1,$2,$3,TRUE,'student','blue')
+       RETURNING id,name,email,role,avatar,created_at`,
+      [name, email, passwordHash],
     );
-    if (latestOtpRows.length) {
-      const waitSeconds = parseInt(latestOtpRows[0].wait_seconds || 0, 10);
-      if (waitSeconds > 0) {
-        return res
-          .status(429)
-          .json({
-            error: `Please wait ${waitSeconds}s before requesting another OTP.`,
-            retryAfterSeconds: waitSeconds,
-          });
-      }
-    }
-
-    const otp = makeOtp();
-    const otpHash = await bcrypt.hash(otp, 10);
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    await pool.query(
-      "DELETE FROM email_otps WHERE email=$1 AND consumed=FALSE",
-      [normalizedEmail],
-    );
-    await pool.query(
-      "INSERT INTO email_otps (email,name,password_hash,otp_hash,attempt_count,expires_at) VALUES ($1,$2,$3,$4,0,NOW() + ($5::text || ' minutes')::interval)",
-      [
-        normalizedEmail,
-        String(name).trim(),
-        passwordHash,
-        otpHash,
-        OTP_TTL_MINUTES,
-      ],
-    );
-
-    await sendOtpEmail(normalizedEmail, otp);
-
-    const devOtp = process.env.NODE_ENV === "production" ? undefined : otp;
-    res.status(200).json({
-      message: "OTP sent to email",
-      expiresInSeconds: OTP_TTL_MINUTES * 60,
-      resendAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS,
-      maxAttempts: OTP_MAX_ATTEMPTS,
-      ...(devOtp ? { devOtp } : {}),
-    });
+    const user = rows[0];
+    return res.status(201).json({ token: issueToken(user), user });
   } catch (err) {
-    console.error("Register OTP error:", err.message);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Register error:", err.message);
+    return res.status(500).json({ error: "Unable to create account" });
   }
 });
 
-app.post("/api/auth/register/verify-otp", async (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const password = String(req.body.password || "");
+    if (!email || !password) return res.status(400).json({ error: "All fields required" });
+    const { rows } = await pool.query("SELECT * FROM users WHERE email=$1", [email]);
+    if (!rows.length || !(await bcrypt.compare(password, rows[0].password)))
+      return res.status(401).json({ error: "Invalid credentials" });
+    const user = userView(rows[0]);
+    return res.json({ token: issueToken(user), user });
+  } catch (err) {
+    console.error("Login error:", err.message);
+    return res.status(500).json({ error: "Unable to sign in" });
+  }
+});
+
+app.get("/api/auth/me", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT id,name,email,role,avatar,created_at FROM users WHERE id=$1",
+      [req.user.id],
+    );
+    if (!rows.length) return res.status(404).json({ error: "User not found" });
+    return res.json(rows[0]);
+  } catch (err) {
+    return res.status(500).json({ error: "Unable to load account" });
+  }
+});
+
+app.get("/api/subjects", async (req, res) => {
+  try {
+    const params = [];
+    const conditions = [];
+    const { semester, branch, search, sort = "semester" } = req.query;
+    if (semester) { params.push(intParam(semester)); conditions.push(`s.semester=$${params.length}`); }
+    if (branch) { params.push(String(branch)); conditions.push(`s.branch=$${params.length}`); }
+    if (search) { params.push(`%${String(search)}%`); conditions.push(`(s.name ILIKE $${params.length} OR s.code ILIKE $${params.length})`); }
+    let query = `SELECT s.*, COUNT(DISTINCT p.id)::int AS paper_count
+      FROM subjects s LEFT JOIN papers p ON p.subject_id=s.id`;
+    if (conditions.length) query += ` WHERE ${conditions.join(" AND ")}`;
+    query += " GROUP BY s.id";
+    const order = { semester: "s.semester, s.name", name: "s.name", branch: "s.branch, s.semester", papers: "paper_count DESC" };
+    query += ` ORDER BY ${order[sort] || order.semester}`;
+    const { rows } = await pool.query(query, params);
+    return res.json(rows);
+  } catch (err) { return res.status(500).json({ error: "Unable to load subjects" }); }
+});
+
+app.get("/api/subjects/:id", async (req, res) => {
+  try {
+    const { rows: subjects } = await pool.query("SELECT * FROM subjects WHERE id=$1", [req.params.id]);
+    if (!subjects.length) return res.status(404).json({ error: "Subject not found" });
+    const { rows: papers } = await pool.query(
+      `SELECT p.*, COALESCE(json_agg(json_build_object('id',pf.id,'url',pf.file_url,'name',pf.original_name,'type',pf.file_type,'size',pf.file_size) ORDER BY pf.created_at) FILTER (WHERE pf.id IS NOT NULL), '[]') AS files
+       FROM papers p LEFT JOIN paper_files pf ON pf.paper_id=p.id
+       WHERE p.subject_id=$1 GROUP BY p.id ORDER BY p.year DESC, p.exam_type`,
+      [req.params.id],
+    );
+    return res.json({ ...subjects[0], papers });
+  } catch (err) { return res.status(500).json({ error: "Unable to load subject" }); }
+});
+
+app.post("/api/subjects", auth, async (req, res) => {
+  try {
+    const { name, code, semester, branch, description } = req.body;
+    if (!String(name || "").trim()) return res.status(400).json({ error: "Name required" });
+    const { rows } = await pool.query(
+      `INSERT INTO subjects (name,code,semester,branch,description,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [String(name).trim(), code || null, intParam(semester), branch || null, description || null, req.user.id],
+    );
+    return res.status(201).json(rows[0]);
+  } catch (err) { return res.status(500).json({ error: "Unable to create subject" }); }
+});
+
+app.put("/api/subjects/:id", auth, async (req, res) => {
+  try {
+    if (!(await ownsResource("subjects", req.params.id, req.user))) return res.status(403).json({ error: "You can only modify subjects you created" });
+    const { name, code, semester, branch, description } = req.body;
+    const { rows } = await pool.query(
+      "UPDATE subjects SET name=$1,code=$2,semester=$3,branch=$4,description=$5 WHERE id=$6 RETURNING *",
+      [name, code || null, intParam(semester), branch || null, description || null, req.params.id],
+    );
+    if (!rows.length) return res.status(404).json({ error: "Subject not found" });
+    return res.json(rows[0]);
+  } catch (err) { return res.status(500).json({ error: "Unable to update subject" }); }
+});
+
+app.delete("/api/subjects/:id", auth, async (req, res) => {
+  try {
+    if (!(await ownsResource("subjects", req.params.id, req.user))) return res.status(403).json({ error: "You can only delete subjects you created" });
+    const result = await pool.query("DELETE FROM subjects WHERE id=$1", [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "Subject not found" });
+    return res.json({ message: "Deleted" });
+  } catch (err) { return res.status(500).json({ error: "Unable to delete subject" }); }
+});
+
+app.get("/api/papers", async (req, res) => {
+  try {
+    const params = [];
+    const conditions = [];
+    const { subject_id, year, exam_type, branch, semester, search, limit, offset } = req.query;
+    if (subject_id) { params.push(intParam(subject_id)); conditions.push(`p.subject_id=$${params.length}`); }
+    if (year) { params.push(intParam(year)); conditions.push(`p.year=$${params.length}`); }
+    if (exam_type) { params.push(String(exam_type)); conditions.push(`p.exam_type=$${params.length}`); }
+    if (branch) { params.push(String(branch)); conditions.push(`s.branch=$${params.length}`); }
+    if (semester) { params.push(intParam(semester)); conditions.push(`s.semester=$${params.length}`); }
+    if (search) { params.push(`%${String(search)}%`); conditions.push(`(p.title ILIKE $${params.length} OR s.name ILIKE $${params.length})`); }
+    let query = `SELECT p.*,s.name AS subject_name,s.code AS subject_code,s.semester,s.branch,
+      COALESCE(json_agg(json_build_object('id',pf.id,'url',pf.file_url,'name',pf.original_name,'type',pf.file_type,'size',pf.file_size) ORDER BY pf.created_at) FILTER (WHERE pf.id IS NOT NULL), '[]') AS files
+      FROM papers p JOIN subjects s ON p.subject_id=s.id LEFT JOIN paper_files pf ON pf.paper_id=p.id`;
+    if (conditions.length) query += ` WHERE ${conditions.join(" AND ")}`;
+    query += " GROUP BY p.id,s.id ORDER BY p.year DESC,s.name";
+    const safeLimit = Math.min(Math.max(intParam(limit, 100), 1), 100);
+    const safeOffset = Math.max(intParam(offset, 0), 0);
+    params.push(safeLimit, safeOffset);
+    query += ` LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    const { rows } = await pool.query(query, params);
+    return res.json(rows);
+  } catch (err) { return res.status(500).json({ error: "Unable to load papers" }); }
+});
+
+app.get("/api/papers/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.*,s.name AS subject_name,s.code AS subject_code,s.semester,s.branch
+       FROM papers p JOIN subjects s ON p.subject_id=s.id WHERE p.id=$1`, [req.params.id],
+    );
+    if (!rows.length) return res.status(404).json({ error: "Paper not found" });
+    const { rows: files } = await pool.query("SELECT * FROM paper_files WHERE paper_id=$1 ORDER BY created_at", [req.params.id]);
+    return res.json({ ...rows[0], files });
+  } catch (err) { return res.status(500).json({ error: "Unable to load paper" }); }
+});
+
+async function insertPaperFiles(client, paperId, files) {
+  const stored = [];
+  for (const file of files) {
+    const saved = await storeFile(file);
+    const { rows } = await client.query(
+      `INSERT INTO paper_files (paper_id,filename,original_name,file_type,file_size,file_url)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [paperId, saved.filename, file.originalname, file.mimetype, file.size, saved.file_url],
+    );
+    stored.push(rows[0]);
+  }
+  return stored;
+}
+
+app.post("/api/papers", auth, upload.any(), async (req, res) => {
+  const client = await pool.connect();
+  const files = parseFiles(req);
+  try {
+    const subjectId = intParam(req.body.subject_id);
+    const year = intParam(req.body.year);
+    if (!subjectId || !year) return res.status(400).json({ error: "subject_id and year required" });
+    if (!files.length) return res.status(400).json({ error: "At least one file is required" });
+    if (!files.some((file) => String(file.mimetype).startsWith("image/"))) return res.status(400).json({ error: "At least one image file is required" });
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `INSERT INTO papers (subject_id,year,exam_type,title,description,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [subjectId, year, req.body.exam_type || "Annual", req.body.title || null, req.body.description || null, req.user.id],
+    );
+    const paperFiles = await insertPaperFiles(client, rows[0].id, files);
+    await client.query("COMMIT");
+    return res.status(201).json({ ...rows[0], files: paperFiles });
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error("Paper upload error:", err.message);
+    return res.status(500).json({ error: "Unable to upload paper" });
+  } finally { client.release(); }
+});
+
+app.post("/api/papers/:id/files", auth, upload.any(), async (req, res) => {
   const client = await pool.connect();
   try {
-    const { email, otp } = req.body;
-    if (!email || !otp)
-      return res.status(400).json({ error: "Email and OTP required" });
-    const normalizedEmail = String(email).trim().toLowerCase();
-
+    const files = parseFiles(req);
+    const paperId = intParam(req.params.id);
+    if (!files.length) return res.status(400).json({ error: "At least one file is required" });
+    if (!(await ownsResource("papers", paperId, req.user))) return res.status(403).json({ error: "You can only upload files to papers you created" });
     await client.query("BEGIN");
-    const { rows: otpRows } = await client.query(
-      `SELECT *, (expires_at <= NOW()) AS is_expired FROM email_otps
-       WHERE email=$1 AND consumed=FALSE ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [normalizedEmail],
-    );
-
-    if (!otpRows.length) {
-      await client.query("ROLLBACK");
-      return res
-        .status(400)
-        .json({ error: "No active OTP found. Please request a new OTP." });
-    }
-
-    const otpRow = otpRows[0];
-    if (otpRow.is_expired) {
-      await client.query("UPDATE email_otps SET consumed=TRUE WHERE id=$1", [
-        otpRow.id,
-      ]);
-      await client.query("COMMIT");
-      return res
-        .status(400)
-        .json({ error: "OTP expired. Please request a new OTP." });
-    }
-
-    if ((otpRow.attempt_count || 0) >= OTP_MAX_ATTEMPTS) {
-      await client.query("UPDATE email_otps SET consumed=TRUE WHERE id=$1", [
-        otpRow.id,
-      ]);
-      await client.query("COMMIT");
-      return res
-        .status(429)
-        .json({
-          error: "Too many invalid OTP attempts. Please request a new OTP.",
-        });
-    }
-
-    const ok = await bcrypt.compare(String(otp), otpRow.otp_hash);
-    if (!ok) {
-      const nextAttempts = (otpRow.attempt_count || 0) + 1;
-      const remaining = Math.max(OTP_MAX_ATTEMPTS - nextAttempts, 0);
-      if (remaining === 0) {
-        await client.query(
-          "UPDATE email_otps SET consumed=TRUE, attempt_count=$1 WHERE id=$2",
-          [nextAttempts, otpRow.id],
-        );
-        await client.query("COMMIT");
-        return res
-          .status(429)
-          .json({
-            error: "Too many invalid OTP attempts. Please request a new OTP.",
-          });
-      }
-      await client.query("UPDATE email_otps SET attempt_count=$1 WHERE id=$2", [
-        nextAttempts,
-        otpRow.id,
-      ]);
-      await client.query("COMMIT");
-      return res
-        .status(400)
-        .json({ error: `Invalid OTP. ${remaining} attempt(s) remaining.` });
-    }
-
-    const { rows: existingUser } = await client.query(
-      "SELECT id FROM users WHERE email=$1 FOR UPDATE",
-      [normalizedEmail],
-    );
-    if (existingUser.length) {
-      await client.query("UPDATE email_otps SET consumed=TRUE WHERE id=$1", [
-        otpRow.id,
-      ]);
-      await client.query("COMMIT");
-      return res.status(400).json({ error: "Email already registered" });
-    }
-
-    // Create the user account now that OTP is verified
-    await client.query("UPDATE email_otps SET consumed=TRUE WHERE id=$1", [
-      otpRow.id,
-    ]);
-    const insertRes = await client.query(
-      `INSERT INTO users (name, email, password, email_verified, role, avatar)
-       VALUES ($1, $2, $3, TRUE, $4, $5) RETURNING id, name, email, role, avatar, created_at`,
-      [
-        String(otpRow.name || req.body.name || "").trim(),
-        normalizedEmail,
-        otpRow.password_hash,
-        "student",
-        "blue",
-      ],
-    );
-
-    const newUser = insertRes.rows[0];
+    const inserted = await insertPaperFiles(client, paperId, files);
     await client.query("COMMIT");
-    const token = jwt.sign(
-      { id: newUser.id, email: newUser.email, role: newUser.role },
-      JWT_SECRET,
-    );
-    return res.status(200).json({ token, user: newUser });
+    return res.status(201).json(inserted);
   } catch (err) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (_) {}
-    console.error("Verify OTP error:", err.message);
-    return res.status(500).json({ error: "Internal server error" });
-  } finally {
-    client.release();
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    return res.status(500).json({ error: "Unable to upload files" });
+  } finally { client.release(); }
+});
+
+app.delete("/api/papers/:id", auth, async (req, res) => {
+  try {
+    if (!(await ownsResource("papers", req.params.id, req.user))) return res.status(403).json({ error: "You can only delete papers you created" });
+    const { rows: files } = await pool.query("SELECT filename FROM paper_files WHERE paper_id=$1", [req.params.id]);
+    const result = await pool.query("DELETE FROM papers WHERE id=$1", [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "Paper not found" });
+    await Promise.allSettled(files.map((file) => removeStoredFile(file.filename)));
+    return res.json({ message: "Deleted" });
+  } catch (err) { return res.status(500).json({ error: "Unable to delete paper" }); }
+});
+
+app.delete("/api/papers/files/:fileId", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT pf.*,p.created_by FROM paper_files pf JOIN papers p ON p.id=pf.paper_id WHERE pf.id=$1", [req.params.fileId]);
+    if (!rows.length) return res.status(404).json({ error: "File not found" });
+    if (req.user.role !== "admin" && rows[0].created_by !== req.user.id) return res.status(403).json({ error: "You can only delete files from papers you created" });
+    await pool.query("DELETE FROM paper_files WHERE id=$1", [req.params.fileId]);
+    await removeStoredFile(rows[0].filename);
+    return res.json({ message: "File deleted" });
+  } catch (err) { return res.status(500).json({ error: "Unable to delete file" }); }
+});
+
+app.get("/api/notes", async (req, res) => {
+  try {
+    const params = [];
+    let query = "SELECT n.*,s.name AS subject_name FROM notes n LEFT JOIN subjects s ON n.subject_id=s.id";
+    if (req.query.subject_id) { params.push(intParam(req.query.subject_id)); query += " WHERE n.subject_id=$1"; }
+    query += " ORDER BY n.created_at DESC";
+    const { rows } = await pool.query(query, params);
+    return res.json(rows);
+  } catch (err) { return res.status(500).json({ error: "Unable to load notes" }); }
+});
+
+app.post("/api/notes", auth, async (req, res) => {
+  try {
+    const { subject_id, title, content, color } = req.body;
+    if (!String(content || "").trim()) return res.status(400).json({ error: "Content required" });
+    const { rows } = await pool.query(
+      `INSERT INTO notes (subject_id,user_id,title,content,color) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [subject_id ? intParam(subject_id) : null, req.user.id, title || null, String(content).trim(), color || "default"],
+    );
+    return res.status(201).json(rows[0]);
+  } catch (err) { return res.status(500).json({ error: "Unable to save note" }); }
+});
+
+app.delete("/api/notes/:id", auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT user_id FROM notes WHERE id=$1", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: "Note not found" });
+    if (req.user.role !== "admin" && rows[0].user_id !== req.user.id) return res.status(403).json({ error: "You can only delete notes you created" });
+    await pool.query("DELETE FROM notes WHERE id=$1", [req.params.id]);
+    return res.json({ message: "Deleted" });
+  } catch (err) { return res.status(500).json({ error: "Unable to delete note" }); }
+});
+
+app.get("/api/stats", async (req, res) => {
+  try {
+    const [subjects, papers, years, users, notes] = await Promise.all([
+      pool.query("SELECT COUNT(*) FROM subjects"),
+      pool.query("SELECT COUNT(*) FROM papers"),
+      pool.query("SELECT COUNT(DISTINCT year) FROM papers"),
+      pool.query("SELECT COUNT(*) FROM users"),
+      pool.query("SELECT COUNT(*) FROM notes"),
+    ]);
+    return res.json({
+      totalSubjects: Number(subjects.rows[0].count),
+      totalPapers: Number(papers.rows[0].count),
+      totalYears: Number(years.rows[0].count),
+      totalUsers: Number(users.rows[0].count),
+      totalNotes: Number(notes.rows[0].count),
+    });
+  } catch (err) { return res.status(500).json({ error: "Unable to load statistics" }); }
+});
+
+async function getAiSubjectContext(subjectId) {
+  let subjectContext = "";
+  let papersContext = "";
+  if (!subjectId) return { subjectContext, papersContext };
+  const { rows: subjects } = await pool.query("SELECT * FROM subjects WHERE id=$1", [subjectId]);
+  if (!subjects.length) return { subjectContext, papersContext };
+  const subject = subjects[0];
+  subjectContext = `Subject: ${subject.name} (${subject.code}), Semester ${subject.semester}, Branch: ${subject.branch}. Description: ${subject.description || ""}`;
+  const { rows: papers } = await pool.query("SELECT year,exam_type,title,description FROM papers WHERE subject_id=$1 ORDER BY year DESC", [subjectId]);
+  const grouped = {};
+  papers.forEach((paper) => { (grouped[paper.exam_type] ||= []).push(paper.year); });
+  papersContext = Object.entries(grouped).map(([type, years]) => `${type}: years ${years.join(", ")}`).join("\n");
+  return { subjectContext, papersContext, subject };
+}
+
+function aiUnavailable(res) {
+  const cooldown = getAiCooldownSeconds();
+  if (cooldown) return res.status(429).json({ error: `AI is rate-limited. Try again in ${cooldown}s.` });
+  return res.status(503).json({ error: "AI service is not configured. Please try again later." });
+}
+
+app.post("/api/ai/chat", auth, async (req, res) => {
+  try {
+    const { question, subjectId, sessionId, history = [] } = req.body;
+    if (!String(question || "").trim()) return res.status(400).json({ error: "Question required" });
+    if (!openai) return aiUnavailable(res);
+    const { subjectContext, papersContext } = await getAiSubjectContext(intParam(subjectId));
+    const messages = [
+      { role: "system", content: `You are an expert academic AI assistant for NCET engineering students. Use this context when relevant:\n${subjectContext}\n${papersContext}\nGive concise, exam-focused, clearly structured answers.` },
+      ...(Array.isArray(history) ? history.slice(-10).filter((item) => ["user", "assistant"].includes(item.role)).map((item) => ({ role: item.role, content: String(item.content || "").slice(0, 4000) })) : []),
+      { role: "user", content: String(question).trim().slice(0, 4000) },
+    ];
+    const completion = await createAiCompletionWithFallback(messages, 1500, 0.7);
+    const answer = completion.choices?.[0]?.message?.content || "No answer returned.";
+    if (sessionId && subjectId) {
+      await pool.query("INSERT INTO ai_chats (session_id,subject_id,role,content) VALUES ($1,$2,$3,$4)", [sessionId, subjectId, "user", question]);
+      await pool.query("INSERT INTO ai_chats (session_id,subject_id,role,content) VALUES ($1,$2,$3,$4)", [sessionId, subjectId, "assistant", answer]);
+    }
+    return res.json({ answer, tokens: completion.usage });
+  } catch (err) {
+    console.error("AI chat error:", err.message);
+    return res.status(getAiErrorStatus(err) === 429 ? 429 : 503).json({ error: "AI service is temporarily unavailable." });
   }
 });
 
-// Initialize DB and start the server
-initDb()
-  .then(() => {
-    app
-      .listen(PORT, "0.0.0.0", () => {
-        console.log(`Server listening on port ${PORT}`);
-      })
-      .on("error", (err) => {
-        if (err.code !== "EADDRINUSE")
-          console.error("Server error:", err.message);
-      });
-  })
-  .catch((err) => {
-    console.error(
-      "Failed to initialize database:",
-      err && err.message ? err.message : err,
-    );
-  });
+app.post("/api/ai/analyze", auth, async (req, res) => {
+  try {
+    if (!openai) return aiUnavailable(res);
+    const subjectId = intParam(req.body.subjectId);
+    const { subjectContext, subject } = await getAiSubjectContext(subjectId);
+    if (!subject) return res.status(404).json({ error: "Subject not found" });
+    const { rows: papers } = await pool.query("SELECT year,exam_type,title,description FROM papers WHERE subject_id=$1 ORDER BY year,exam_type", [subjectId]);
+    const paperText = papers.map((paper) => `${paper.year} ${paper.exam_type}: ${paper.description || paper.title || ""}`).join("\n");
+    const completion = await createAiCompletionWithFallback([
+      { role: "system", content: "You are an expert engineering exam analyst. Give accurate, practical study guidance." },
+      { role: "user", content: `Analyze ${subjectContext}. Previous papers:\n${paperText}\nProvide IUT-1, IUT-2, ESE important questions, repeated topics, high-priority concepts, and predicted questions for ${new Date().getFullYear()}. Use clear headings and bullets.` },
+    ], 2000, 0.5);
+    return res.json({ analysis: completion.choices?.[0]?.message?.content || "No analysis returned.", subject });
+  } catch (err) {
+    console.error("AI analysis error:", err.message);
+    return res.status(getAiErrorStatus(err) === 429 ? 429 : 503).json({ error: "AI service is temporarily unavailable." });
+  }
+});
+
+app.use("/api", (req, res) => res.status(404).json({ error: "Endpoint not found" }));
+app.use((err, req, res, next) => {
+  console.error("Unhandled request error:", err.message);
+  if (res.headersSent) return next(err);
+  if (err.type === "entity.too.large" || err.status === 413) {
+    return res.status(413).json({ error: "Request payload is too large" });
+  }
+  return res.status(500).json({ error: "Internal server error" });
+});
+
+let initPromise;
+function initialize() {
+  if (!initPromise) initPromise = initDb();
+  return initPromise;
+}
+
+if (require.main === module) {
+  initialize().then(() => {
+    app.listen(PORT, "0.0.0.0", () => console.log(`Server listening on port ${PORT}`));
+  }).catch((err) => console.error("Failed to initialize database:", err.message));
+}
+
+module.exports = app;
+module.exports.initialize = initialize;

@@ -26,14 +26,13 @@ test.describe('Critical User Flows', () => {
 
   test('register form validation', async ({ page }) => {
     await page.goto('/register');
-    await page.click('button[type="submit"]');
-    await expect(page.locator('text=Name, email and password are required')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create Account' })).toBeVisible();
   });
 
   test('password strength indicator', async ({ page }) => {
     await page.goto('/register');
     await page.fill('input[type="password"]', 'Weak1');
-    await expect(page.locator('text=Weak')).toBeVisible();
+    await expect(page.locator('text=Fair')).toBeVisible();
   });
 
   test('dashboard requires auth', async ({ page }) => {

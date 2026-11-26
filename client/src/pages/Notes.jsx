@@ -56,7 +56,7 @@ export default function Notes() {
         <motion.div className="page-header" initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}>
           <div className="header-left">
             <h1 className="page-title">Anonymous Notes</h1>
-            <p className="page-subtitle">Share tips, notes, and resources — completely anonymous, no name shown</p>
+            <p className="page-subtitle">Share tips, notes, and resources — your name is never shown</p>
           </div>
           <div className="header-right">
             <button className="btn btn-primary" onClick={() => setShowModal(true)}><Plus size={16} /> Share Note</button>
@@ -74,7 +74,7 @@ export default function Notes() {
 
         <div style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 12, padding: '0.85rem 1.1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
           <span style={{ fontSize: '1.2rem' }}>🔒</span>
-          <span><strong style={{ color: 'var(--text-primary)' }}>100% Anonymous</strong> — No name, email, or identity is stored with your notes. Share freely.</span>
+          <span><strong style={{ color: 'var(--text-primary)' }}>Anonymous to students</strong> — Your name and email are never displayed. Only you can delete your own notes.</span>
         </div>
 
         {loading ? (
@@ -118,7 +118,7 @@ export default function Notes() {
                 <button className="modal-close" onClick={() => setShowModal(false)}>x</button>
               </div>
               <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8, padding: '0.65rem 1rem', marginBottom: '1.25rem', fontSize: '0.8rem', color: '#6ee7b7' }}>
-                🔒 Your note will be completely anonymous — no name or identity is recorded.
+                🔒 Your name and email will never be shown with this note.
               </div>
               <form onSubmit={save}>
                 <div className="form-group">
@@ -150,7 +150,7 @@ export default function Notes() {
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                   <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Sharing...' : 'Share Anonymously'}</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Sharing...' : 'Share Note'}</button>
                 </div>
               </form>
             </motion.div>

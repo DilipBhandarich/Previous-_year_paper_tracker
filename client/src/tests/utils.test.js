@@ -1,20 +1,21 @@
 import { downloadImagesAsPdf } from '../utils/downloadImagesPdf';
+import { vi } from 'vitest';
 
 // Mock jsPDF
-jest.mock('jspdf', () => {
-  return jest.fn().mockImplementation(() => ({
-    internal: { pageSize: { getWidth: () => 595, getHeight: () => 842 } },
-    addPage: jest.fn(),
-    addImage: jest.fn(),
-    save: jest.fn(),
-  }));
+vi.mock('jspdf', () => {
+  return { jsPDF: vi.fn(function MockJsPdf() {
+    this.internal = { pageSize: { getWidth: () => 595, getHeight: () => 842 } };
+    this.addPage = vi.fn();
+    this.addImage = vi.fn();
+    this.save = vi.fn();
+  }) };
 });
 
 describe('downloadImagesAsPdf', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    global.URL.createObjectURL = jest.fn(() => 'blob:test');
-    global.URL.revokeObjectURL = jest.fn();
+    vi.clearAllMocks();
+    global.URL.createObjectURL = vi.fn(() => 'blob:test');
+    global.URL.revokeObjectURL = vi.fn();
   });
 
   it('should throw error when no image files', async () => {
@@ -27,9 +28,9 @@ describe('downloadImagesAsPdf', () => {
   });
 
   it('should process image files', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
+    global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      blob: jest.fn().mockResolvedValue(new Blob()),
+      blob: vi.fn().mockResolvedValue(new Blob()),
     });
 
     const img = {
@@ -37,11 +38,13 @@ describe('downloadImagesAsPdf', () => {
       naturalHeight: 600,
       width: 800,
       height: 600,
-      decode: jest.fn().mockResolvedValue(undefined),
+      decode: vi.fn().mockResolvedValue(undefined),
       onload: null,
       onerror: null,
     };
-    global.Image = jest.fn().mockImplementation(() => img);
+    global.Image = vi.fn(function MockImage() { return img; });
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({ drawImage: vi.fn() }));
+    HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/jpeg;base64,test');
 
     const files = [
       { type: 'image/jpeg', url: '/test1.jpg' },

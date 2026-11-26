@@ -28,13 +28,8 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const requestRegisterOtp = async (name, email, password) => {
-    const { data } = await axios.post('/api/auth/register/request-otp', { name, email, password });
-    return data;
-  };
-
-  const verifyRegisterOtp = async (email, otp) => {
-    const { data } = await axios.post('/api/auth/register/verify-otp', { email, otp });
+  const register = async (name, email, password) => {
+    const { data } = await axios.post('/api/auth/register', { name, email, password });
     localStorage.setItem('token', data.token);
     axios.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
     setUser(data.user);
@@ -48,7 +43,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, requestRegisterOtp, verifyRegisterOtp, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );
