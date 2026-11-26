@@ -38,7 +38,14 @@ export default function Dashboard() {
     { icon: '📝', num: stats.totalNotes, label: 'Notes Shared', color: 'yellow', link: '/notes' },
   ] : [];
 
-  const examColors = { 'IUT-1': 'badge-indigo', 'IUT-2': 'badge-violet', 'ESE': 'badge-cyan', 'Annual': 'badge-green' };
+  const examColors = { 'IAT-1': 'badge-indigo', 'IAT-2': 'badge-violet', 'SEE': 'badge-cyan', 'Annual': 'badge-green' };
+  const normalizeExamType = (examType) => {
+    if (!examType) return '';
+    if (examType === 'IUT-1') return 'IAT-1';
+    if (examType === 'IUT-2') return 'IAT-2';
+    if (examType === 'ESE') return 'SEE';
+    return examType;
+  };
 
   return (
     <div className="page">
@@ -85,7 +92,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div className="dashboard-main-grid">
           {/* RECENT PAPERS */}
           <FV delay={0.3}>
             <div>
@@ -114,7 +121,7 @@ export default function Dashboard() {
                               {p.year} • Sem {p.semester} • {p.branch}
                             </div>
                           </div>
-                          <span className={`badge ${examColors[p.exam_type] || 'badge-gray'}`}>{p.exam_type}</span>
+                          <span className={`badge ${examColors[normalizeExamType(p.exam_type)] || 'badge-gray'}`}>{normalizeExamType(p.exam_type)}</span>
                         </div>
                       </div>
                     </Link>
@@ -163,7 +170,7 @@ export default function Dashboard() {
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.3rem' }}>Try the AI Question Predictor</div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Open any subject and click "Analyze with AI" to get IUT-1, IUT-2 & ESE predictions.</div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Open any subject and click "Analyze with AI" to get IAT-1, IAT-2 & SEE predictions.</div>
             </div>
             <Link to="/subjects" className="btn btn-primary"><Brain size={15} /> Explore Now <ArrowRight size={15} /></Link>
           </div>

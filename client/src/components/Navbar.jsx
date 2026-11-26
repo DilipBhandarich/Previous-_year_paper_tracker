@@ -1,12 +1,15 @@
+import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, LayoutDashboard, FileText, StickyNote, LogOut, GraduationCap } from 'lucide-react';
+import { BookOpen, LayoutDashboard, FileText, StickyNote, LogOut, GraduationCap, Menu, X } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLogout = () => { logout(); navigate('/'); };
+  const closeMobile = () => setMobileOpen(false);
 
   return (
     <nav className="navbar">
@@ -14,6 +17,10 @@ export default function Navbar() {
         <GraduationCap size={22} />
         NCET Papers
       </NavLink>
+
+      <button className="navbar-mobile-toggle" onClick={() => setMobileOpen((p) => !p)} aria-label="Toggle menu" aria-expanded={mobileOpen}>
+        {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
 
       <ul className="navbar-nav">
         <li>
@@ -49,6 +56,26 @@ export default function Navbar() {
           <LogOut size={15} /> Logout
         </button>
       </div>
+
+      {mobileOpen && (
+        <div className="navbar-mobile-menu" onClick={closeMobile}>
+          <NavLink to="/dashboard" className={({ isActive }) => 'mobile-link' + (isActive ? ' active' : '')}>
+            <LayoutDashboard size={15} /> Dashboard
+          </NavLink>
+          <NavLink to="/subjects" className={({ isActive }) => 'mobile-link' + (isActive ? ' active' : '')}>
+            <BookOpen size={15} /> Subjects
+          </NavLink>
+          <NavLink to="/papers" className={({ isActive }) => 'mobile-link' + (isActive ? ' active' : '')}>
+            <FileText size={15} /> Papers
+          </NavLink>
+          <NavLink to="/notes" className={({ isActive }) => 'mobile-link' + (isActive ? ' active' : '')}>
+            <StickyNote size={15} /> Notes
+          </NavLink>
+          <button className="mobile-link mobile-logout" onClick={handleLogout}>
+            <LogOut size={15} /> Logout
+          </button>
+        </div>
+      )}
     </nav>
   );
 }

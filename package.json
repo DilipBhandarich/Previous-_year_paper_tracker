@@ -4,20 +4,13 @@
   "description": "NCET Previous Year Paper Tracker - MERN Stack Application",
   "scripts": {
     "dev": "node start.js",
-    "start": "node start.js"
+    "start": "node start.js",
+    "test:server": "cd server && npm test",
+    "test:client": "cd client && npm test",
+    "test": "npm run test:server && npm run test:client",
+    "build": "cd client && npm run build"
   },
   "dependencies": {
-    "concurrently": "^8.2.2",
-    "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
-    "drizzle-zod": "^0.8.3",
-    "express": "^5.2.1",
-    "multer": "^2.1.1",
-    "openai": "^6.33.0",
-    "p-limit": "^7.3.0",
-    "p-retry": "^7.1.1",
-    "pg": "^8.20.0",
-    "zod": "^4.3.6",
-    "zod-validation-error": "^5.0.0"
+    "concurrently": "^8.2.2"
   }
 }

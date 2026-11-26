@@ -1,31 +1,158 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Brain, Send, Upload, Plus, Trash2, Eye, Bot, Sparkles, ChevronDown, ChevronUp, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { downloadImagesAsPdf } from '../utils/downloadImagesPdf';
 
-const EXAM_TYPES = ['IUT-1', 'IUT-2', 'ESE', 'Annual', 'Supplementary'];
-const EXAM_COLORS = { 'IUT-1': 'badge-indigo', 'IUT-2': 'badge-violet', 'ESE': 'badge-cyan', 'Annual': 'badge-green', 'Supplementary': 'badge-yellow' };
+const EXAM_TYPES = ['IAT-1', 'IAT-2', 'SEE', 'Annual', 'Supplementary'];
+const EXAM_COLORS = { 'IAT-1': 'badge-indigo', 'IAT-2': 'badge-violet', 'SEE': 'badge-cyan', 'Annual': 'badge-green', 'Supplementary': 'badge-yellow' };
+const makeUploadId = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()));
+
+const toUploadItems = (incoming) => {
+  return Array.from(incoming || []).map((file) => ({
+    id: makeUploadId(),
+    file,
+    previewUrl: URL.createObjectURL(file)
+  }));
+};
+
+const appendUploadItems = (existing, incoming) => {
+  if (!incoming?.length) return existing;
+  return [...existing, ...toUploadItems(incoming)].slice(0, 10);
+};
+
+const toFileUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return url;
+};
+
+const byFileOrder = (a, b) => {
+  const ao = a?.order ?? a?.file_order;
+  const bo = b?.order ?? b?.file_order;
+  if (ao == null && bo == null) return 0;
+  if (ao == null) return 1;
+  if (bo == null) return -1;
+  return ao - bo;
+};
+
+const normalizeExamType = (examType) => {
+  if (!examType) return '';
+  if (examType === 'IUT-1') return 'IAT-1';
+  if (examType === 'IUT-2') return 'IAT-2';
+  if (examType === 'ESE') return 'SEE';
+  return examType;
+};
+
+const renderInlineMarkdown = (text) => {
+  const value = String(text || '');
+  const pattern = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  const parts = value.split(pattern);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+      return <em key={idx}>{part.slice(1, -1)}</em>;
+    }
+    return <span key={idx}>{part}</span>;
+  });
+};
 
 function SimpleMarkdown({ text }) {
-  const html = text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/^### (.+)/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)/gm, '<h1>$1</h1>')
-    .replace(/^- (.+)/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/gs, '<ul>$&</ul>')
-    .split('\n\n').map(p => p.startsWith('<') ? p : '<p>' + p + '</p>').join('');
-  return <div className="msg-content" dangerouslySetInnerHTML={{ __html: html }} />;
+  const lines = String(text || '').split('\n');
+  const nodes = [];
+  let listItems = [];
+  let paragraph = [];
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    nodes.push(
+      <ul key={`ul-${nodes.length}`}>
+        {listItems.map((item, idx) => <li key={idx}>{renderInlineMarkdown(item)}</li>)}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    nodes.push(
+      <p key={`p-${nodes.length}`}>
+        {renderInlineMarkdown(paragraph.join(' '))}
+      </p>
+    );
+    paragraph = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList();
+      flushParagraph();
+      continue;
+    }
+
+    const h3 = line.match(/^###\s+(.+)/);
+    const h2 = line.match(/^##\s+(.+)/);
+    const h1 = line.match(/^#\s+(.+)/);
+    const bullet = line.match(/^-\s+(.+)/);
+
+    if (h1 || h2 || h3) {
+      flushList();
+      flushParagraph();
+      const headingText = (h1 || h2 || h3)[1];
+      if (h1) nodes.push(<h1 key={`h1-${nodes.length}`}>{renderInlineMarkdown(headingText)}</h1>);
+      if (h2) nodes.push(<h2 key={`h2-${nodes.length}`}>{renderInlineMarkdown(headingText)}</h2>);
+      if (h3) nodes.push(<h3 key={`h3-${nodes.length}`}>{renderInlineMarkdown(headingText)}</h3>);
+      continue;
+    }
+
+    if (bullet) {
+      flushParagraph();
+      listItems.push(bullet[1]);
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushList();
+  flushParagraph();
+
+  return <div className="msg-content">{nodes}</div>;
 }
 
 function FileViewer({ files, onClose }) {
   const [active, setActive] = useState(0);
-  const cur = files[active];
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const normalizedFiles = files.map((f) => ({
+    ...f,
+    url: toFileUrl(f.url || f.file_url),
+    type: f.type || f.file_type,
+    name: f.name || f.original_name
+  })).sort(byFileOrder);
+  const cur = normalizedFiles[active];
   const isImg = cur && cur.type && cur.type.startsWith('image/');
+  const imageCount = normalizedFiles.filter((f) => f.type && f.type.startsWith('image/')).length;
+
+  const handleDownloadImagesPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      await downloadImagesAsPdf(normalizedFiles, 'paper-images');
+      toast.success('Downloaded all images as PDF');
+    } catch (err) {
+      toast.error(err.message || 'Failed to generate PDF from images');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   return (
     <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
       <motion.div className="modal modal-lg file-viewer-modal" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={e => e.stopPropagation()}>
@@ -35,9 +162,9 @@ function FileViewer({ files, onClose }) {
         </div>
         <div className="file-viewer-content">
           <div className="file-viewer-sidebar">
-            {files.map((f, i) => (
-              <button key={i} className={'file-thumb-btn' + (active === i ? ' active' : '')} onClick={() => setActive(i)}>
-                {f.type && f.type.startsWith('image/') ? <img src={f.url} alt={f.name} /> : <div className="pdf-thumb" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem' }}>📄</div>}
+            {normalizedFiles.map((f, i) => (
+              <button key={f.id ?? `${f.name}-${f.url}-${f.order ?? f.file_order ?? f._localOrder ?? i}`} className={'file-thumb-btn' + (active === i ? ' active' : '')} onClick={() => setActive(i)}>
+                {f.type && f.type.startsWith('image/') ? <img src={f.url} alt={f.name} /> : <div className="pdf-thumb" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem' }} >📄</div>}
               </button>
             ))}
           </div>
@@ -49,7 +176,10 @@ function FileViewer({ files, onClose }) {
                 <div style={{ textAlign: 'center', padding: '2rem' }}>
                   <div style={{ fontSize: '5rem', marginBottom: '1rem' }}>📄</div>
                   <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{cur.name}</div>
-                  <a href={cur.url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">Open PDF</a>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
+                    <a href={cur.url} target="_blank" rel="noopener noreferrer" className="btn btn-primary">Open PDF</a>
+                    <a href={cur.url} download={cur.name || 'paper-file'} className="btn btn-secondary">Download</a>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -58,6 +188,12 @@ function FileViewer({ files, onClose }) {
               <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{active+1} / {files.length}</span>
               <button className="btn btn-ghost btn-sm" onClick={() => setActive(p => Math.min(files.length-1, p+1))} disabled={active === files.length-1}>Next</button>
             </div>
+            {cur && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <a href={cur.url} download={cur.name || 'paper-file'} className="btn btn-secondary btn-sm">Download This File</a>
+                {imageCount > 0 && <button type="button" className="btn btn-primary btn-sm" onClick={handleDownloadImagesPdf} disabled={downloadingPdf}>{downloadingPdf ? 'Generating PDF...' : `Download All Images as PDF (${imageCount})`}</button>}
+              </div>
+            )}
           </div>
         </div>
       </motion.div>
@@ -75,7 +211,7 @@ export default function SubjectDetail() {
   const [analysis, setAnalysis] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [uploadForm, setUploadForm] = useState({ year: new Date().getFullYear(), exam_type: 'IUT-1', title: '', description: '' });
+  const [uploadForm, setUploadForm] = useState({ year: new Date().getFullYear(), exam_type: 'IAT-1', title: '', description: '' });
   const [uploadFiles, setUploadFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -83,26 +219,63 @@ export default function SubjectDetail() {
 
   // AI CHAT
   const [messages, setMessages] = useState([
-    { role: 'bot', text: 'Hello! I am your AI exam advisor for this subject. I can help you:\n\n- **Predict important questions** for IUT-1, IUT-2, and ESE\n- **Identify repeated topics** across years\n- **Suggest what to focus on** for maximum marks\n\nWhat would you like to know?' }
+    { role: 'bot', text: 'Hello! I am your AI exam advisor for this subject. I can help you:\n\n- **Predict important questions** for IAT-1, IAT-2, and SEE\n- **Identify repeated topics** across years\n- **Suggest what to focus on** for maximum marks\n\nWhat would you like to know?' }
   ]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
+  const [aiCooldownSeconds, setAiCooldownSeconds] = useState(0);
   const msgEndRef = useRef();
   const sessionId = useRef('session_' + Date.now());
+  const uploadFilesRef = useRef([]);
+
+  const parseCooldownSeconds = (message) => {
+    const match = String(message || '').match(/wait\s+(\d+)s/i);
+    if (!match) return 0;
+    const seconds = parseInt(match[1], 10);
+    return Number.isFinite(seconds) ? seconds : 0;
+  };
 
   const QUICK_QUESTIONS = [
-    'What are the most important topics for IUT-1?',
-    'What questions are likely in ESE?',
+    'What are the most important topics for IAT-1?',
+    'What questions are likely in SEE?',
     'Which topics are repeated every year?',
-    'What are the most important IUT-2 questions?',
+    'What are the most important IAT-2 questions?',
     'Predict the top 5 questions for this subject'
   ];
+
+  const closeUploadModal = () => {
+    setUploadFiles((prev) => {
+      prev.forEach((item) => {
+        if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+      return [];
+    });
+    setShowUpload(false);
+  };
 
   useEffect(() => {
     axios.get('/api/subjects/' + id).then(r => setSubject(r.data)).finally(() => setLoading(false));
   }, [id]);
 
   useEffect(() => { msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  useEffect(() => {
+    if (aiCooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setAiCooldownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [aiCooldownSeconds]);
+
+  useEffect(() => {
+    uploadFilesRef.current = uploadFiles;
+  }, [uploadFiles]);
+
+  useEffect(() => () => {
+    uploadFilesRef.current.forEach((item) => {
+      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+  }, []);
 
   const groupByYear = (papers) => {
     const g = {};
@@ -114,7 +287,7 @@ export default function SubjectDetail() {
   };
 
   const sendMsg = async (text) => {
-    if (thinking) return;
+    if (thinking || aiCooldownSeconds > 0) return;
     const q = text || input.trim();
     if (!q) return;
     setInput('');
@@ -125,32 +298,51 @@ export default function SubjectDetail() {
       const { data } = await axios.post('/api/ai/chat', { question: q, subjectId: parseInt(id), sessionId: sessionId.current, history: hist });
       setMessages(p => [...p, { role: 'bot', text: data.answer }]);
     } catch (err) {
-      setMessages(p => [...p, { role: 'bot', text: 'Sorry, I encountered an error. Please try again.' }]);
+      const errorText = err.response?.data?.error || 'Sorry, I encountered an error. Please try again.';
+      const cooldown = parseCooldownSeconds(errorText);
+      if (cooldown > 0) setAiCooldownSeconds(cooldown);
+      setMessages(p => [...p, { role: 'bot', text: errorText }]);
     }
     setThinking(false);
   };
 
   const analyze = async () => {
+    if (aiCooldownSeconds > 0) return;
     setAnalyzing(true); setTab('ai');
     try {
       const { data } = await axios.post('/api/ai/analyze', { subjectId: parseInt(id) });
       setAnalysis(data.analysis);
-    } catch { toast.error('Analysis failed. Try again.'); }
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Analysis failed. Try again.';
+      const cooldown = parseCooldownSeconds(msg);
+      if (cooldown > 0) setAiCooldownSeconds(cooldown);
+      toast.error(msg);
+    }
     finally { setAnalyzing(false); }
   };
 
   const uploadPaper = async (e) => {
     e.preventDefault(); setUploading(true);
     try {
+      if (!uploadFiles.length) {
+        toast.error('Please add at least one image');
+        setUploading(false);
+        return;
+      }
+      const hasImage = uploadFiles.some((item) => String(item.file?.type || '').startsWith('image/'));
+      if (!hasImage) {
+        toast.error('At least one image file is required');
+        setUploading(false);
+        return;
+      }
       const fd = new FormData();
       fd.append('subject_id', id);
       Object.entries(uploadForm).forEach(([k,v]) => { if (v) fd.append(k, v); });
-      uploadFiles.forEach(f => fd.append('files', f));
+      uploadFiles.forEach((item, i) => fd.append(`files_${i}`, item.file));
       const { data } = await axios.post('/api/papers', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setSubject(p => ({ ...p, papers: [data, ...(p.papers || [])] }));
-      setShowUpload(false);
-      setUploadForm({ year: new Date().getFullYear(), exam_type: 'IUT-1', title: '', description: '' });
-      setUploadFiles([]);
+      closeUploadModal();
+      setUploadForm({ year: new Date().getFullYear(), exam_type: 'IAT-1', title: '', description: '' });
       toast.success('Paper uploaded with ' + (data.files?.length || 0) + ' files!');
     } catch (err) { toast.error(err.response?.data?.error || 'Upload failed'); }
     finally { setUploading(false); }
@@ -191,8 +383,8 @@ export default function SubjectDetail() {
               {subject.description && <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem', fontSize: '0.9rem' }}>{subject.description}</p>}
             </div>
             <div className="header-right">
-              <button className="btn btn-secondary" onClick={analyze} disabled={analyzing}>
-                <Sparkles size={15} /> {analyzing ? 'Analyzing...' : 'Analyze with AI'}
+              <button className="btn btn-secondary" onClick={analyze} disabled={analyzing || aiCooldownSeconds > 0}>
+                <Sparkles size={15} /> {analyzing ? 'Analyzing...' : aiCooldownSeconds > 0 ? `Retry in ${aiCooldownSeconds}s` : 'Analyze with AI'}
               </button>
               {user && <button className="btn btn-primary" onClick={() => setShowUpload(true)}><Upload size={15} /> Upload Paper</button>}
             </div>
@@ -229,14 +421,20 @@ export default function SubjectDetail() {
                     </div>
                     <div className="grid-3">
                       {yearPapers.map((p, i) => {
-                        const imgFiles = (p.files || []).filter(f => f && f.type && f.type.startsWith('image/'));
-                        const hasFiles = p.files && p.files.length > 0;
+                        const normalizedFiles = (p.files || []).map((f) => ({
+                          ...f,
+                          url: toFileUrl(f.url || f.file_url),
+                          type: f.type || f.file_type,
+                          name: f.name || f.original_name
+                        }));
+                        const imgFiles = normalizedFiles.filter(f => f && f.type && f.type.startsWith('image/'));
+                        const hasFiles = normalizedFiles.length > 0;
                         return (
                           <motion.div key={p.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.05 }}>
-                            <div className="card paper-card" style={{ cursor: hasFiles ? 'pointer' : 'default' }} onClick={() => hasFiles && setViewFiles(p.files)}>
+                            <div className="card paper-card" style={{ cursor: hasFiles ? 'pointer' : 'default' }} onClick={() => hasFiles && setViewFiles(normalizedFiles)}>
                               <div className="card-header">
                                 <div style={{ flex: 1 }}>
-                                  <span className={'badge ' + (EXAM_COLORS[p.exam_type] || 'badge-gray')} style={{ marginBottom: '0.4rem', display: 'inline-flex' }}>{p.exam_type}</span>
+                                  <span className={'badge ' + (EXAM_COLORS[normalizeExamType(p.exam_type)] || 'badge-gray')} style={{ marginBottom: '0.4rem', display: 'inline-flex' }}>{normalizeExamType(p.exam_type)}</span>
                                   {p.title && <div className="card-title" style={{ fontSize: '0.85rem' }}>{p.title}</div>}
                                 </div>
                                 {user && (
@@ -251,14 +449,14 @@ export default function SubjectDetail() {
                                   {imgFiles.slice(0, 4).map((f, fi) => (
                                     <div key={fi} className="file-thumb"><img src={f.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>
                                   ))}
-                                  {p.files.filter(f => f && !(f.type && f.type.startsWith('image/'))).slice(0, 3 - imgFiles.slice(0,4).length).map((f, fi) => (
+                                  {normalizedFiles.filter(f => f && !(f.type && f.type.startsWith('image/'))).slice(0, 3 - imgFiles.slice(0,4).length).map((f, fi) => (
                                     <div key={'p'+fi} className="file-thumb" style={{ fontSize: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📄</div>
                                   ))}
-                                  {p.files.length > 4 && <div className="file-count-badge">+{p.files.length - 4}</div>}
+                                  {normalizedFiles.length > 4 && <div className="file-count-badge">+{normalizedFiles.length - 4}</div>}
                                 </div>
                               )}
                               <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: hasFiles ? 'var(--accent)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: hasFiles ? 600 : 400 }}>
-                                {hasFiles ? <><Eye size={12} /> {p.files.length} files — click to view</> : '📭 No files attached'}
+                                {hasFiles ? <><Eye size={12} /> {normalizedFiles.length} files — click to view</> : '📭 No files attached'}
                               </div>
                             </div>
                           </motion.div>
@@ -307,14 +505,14 @@ export default function SubjectDetail() {
               <div className="ai-footer">
                 <div className="ai-quick-btns">
                   {QUICK_QUESTIONS.map((q, i) => (
-                    <button key={i} className="ai-quick-btn" onClick={() => sendMsg(q)}>{q}</button>
+                    <button key={i} className="ai-quick-btn" onClick={() => sendMsg(q)} disabled={thinking || aiCooldownSeconds > 0}>{q}</button>
                   ))}
                 </div>
                 <div className="ai-input-area">
                   <input className="ai-input" placeholder="Ask about important topics, predicted questions..." value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMsg()} />
-                  <button className="btn btn-primary btn-icon" style={{ width: 40, height: 40, borderRadius: 10, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => sendMsg()} disabled={thinking || !input.trim()}>
+                  <button className="btn btn-primary btn-icon" style={{ width: 40, height: 40, borderRadius: 10, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => sendMsg()} disabled={thinking || aiCooldownSeconds > 0 || !input.trim()}>
                     <Send size={16} />
                   </button>
                 </div>
@@ -330,9 +528,9 @@ export default function SubjectDetail() {
               <div className="empty-state">
                 <div className="empty-icon">🧠</div>
                 <h3>AI Analysis Not Generated Yet</h3>
-                <p>Click "Analyze with AI" to get detailed predictions for IUT-1, IUT-2, and ESE.</p>
-                <button className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={analyze}>
-                  <Sparkles size={15} /> Generate Analysis
+                <p>Click "Analyze with AI" to get detailed predictions for IAT-1, IAT-2, and SEE.</p>
+                <button className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={analyze} disabled={aiCooldownSeconds > 0}>
+                  <Sparkles size={15} /> {aiCooldownSeconds > 0 ? `Retry in ${aiCooldownSeconds}s` : 'Generate Analysis'}
                 </button>
               </div>
             )}
@@ -350,7 +548,7 @@ export default function SubjectDetail() {
                     <Brain size={18} style={{ color: 'var(--accent)' }} />
                     AI Analysis — {subject.name}
                   </div>
-                  <button className="btn btn-secondary btn-sm" onClick={analyze}>Regenerate</button>
+                  <button className="btn btn-secondary btn-sm" onClick={analyze} disabled={aiCooldownSeconds > 0}>{aiCooldownSeconds > 0 ? `Retry in ${aiCooldownSeconds}s` : 'Regenerate'}</button>
                 </div>
                 <div className="analysis-content">
                   <SimpleMarkdown text={analysis} />
@@ -364,14 +562,14 @@ export default function SubjectDetail() {
       {/* UPLOAD MODAL */}
       <AnimatePresence>
         {showUpload && (
-          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowUpload(false)}>
+          <motion.div className="modal-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={(e) => { if (e.target === e.currentTarget) closeUploadModal(); }}>
             <motion.div className="modal" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={e => e.stopPropagation()} style={{ maxWidth: 580 }}>
               <div className="modal-header">
                 <span className="modal-title">Upload Paper for {subject.name}</span>
-                <button className="modal-close" onClick={() => setShowUpload(false)}>x</button>
+                <button className="modal-close" onClick={closeUploadModal}>x</button>
               </div>
               <form onSubmit={uploadPaper}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                <div className="form-grid-3">
                   <div className="form-group">
                     <label className="form-label">Year *</label>
                     <select className="form-control" value={uploadForm.year} onChange={e => setUploadForm(p => ({...p, year: e.target.value}))} required>
@@ -398,27 +596,38 @@ export default function SubjectDetail() {
                   <div className={'upload-zone' + (dragging ? ' dragging' : '')}
                     onDragOver={e => { e.preventDefault(); setDragging(true); }}
                     onDragLeave={() => setDragging(false)}
-                    onDrop={e => { e.preventDefault(); setDragging(false); setUploadFiles(p => [...p, ...Array.from(e.dataTransfer.files)].slice(0,10)); }}
+                    onDrop={e => { e.preventDefault(); setDragging(false); setUploadFiles(p => appendUploadItems(p, Array.from(e.dataTransfer.files))); }}
                     onClick={() => fileRef.current.click()}>
                     <div className="upload-icon">📎</div>
                     <p>Drag & drop or click to select</p>
                     <p className="upload-hint">JPG, PNG, PDF — up to 10 files</p>
-                    <input ref={fileRef} type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }} onChange={e => setUploadFiles(p => [...p, ...Array.from(e.target.files)].slice(0,10))} />
+                    <input ref={fileRef} type="file" accept="image/*,.pdf" multiple style={{ display: 'none' }} onChange={e => setUploadFiles(p => appendUploadItems(p, Array.from(e.target.files)))} />
                   </div>
                   {uploadFiles.length > 0 && (
-                    <div className="file-preview-grid">
-                      {uploadFiles.map((f, i) => (
-                        <div key={i} className="file-preview-item">
-                          {f.type.startsWith('image/') ? <img src={URL.createObjectURL(f)} alt="" /> : <div className="file-type-icon">📄</div>}
-                          <button className="remove-file" type="button" onClick={() => setUploadFiles(p => p.filter((_,fi) => fi !== i))}>x</button>
-                          <div className="file-name">{f.name}</div>
-                        </div>
+                    <Reorder.Group axis="x" values={uploadFiles} onReorder={setUploadFiles} className="file-preview-grid">
+                      {uploadFiles.map((item) => (
+                        <Reorder.Item value={item} key={item.id} className="file-preview-item" dragElastic={0.12}>
+                          {item.file.type.startsWith('image/') ? <img src={item.previewUrl} alt="" /> : <div className="file-type-icon">📄</div>}
+                          <button
+                            className="remove-file"
+                            type="button"
+                            onClick={() => setUploadFiles(prev => {
+                              const found = prev.find(x => x.id === item.id);
+                              if (found) URL.revokeObjectURL(found.previewUrl);
+                              return prev.filter(x => x.id !== item.id);
+                            })}
+                          >
+                            x
+                          </button>
+                          <div className="file-name">{item.file.name}</div>
+                        </Reorder.Item>
                       ))}
-                    </div>
+                    </Reorder.Group>
                   )}
+                  {uploadFiles.length > 1 && <p className="upload-hint">Drag files left/right to set final order</p>}
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button type="button" className="btn btn-ghost" onClick={() => setShowUpload(false)}>Cancel</button>
+                  <button type="button" className="btn btn-ghost" onClick={closeUploadModal}>Cancel</button>
                   <button type="submit" className="btn btn-primary" disabled={uploading}>{uploading ? 'Uploading...' : 'Upload Paper'}</button>
                 </div>
               </form>

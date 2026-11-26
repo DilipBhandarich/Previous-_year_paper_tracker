@@ -7,15 +7,36 @@ import toast from 'react-hot-toast';
 
 export default function Register() {
   const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpExpiresAt, setOtpExpiresAt] = useState(null);
+  const [resendAt, setResendAt] = useState(null);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [resendSecondsLeft, setResendSecondsLeft] = useState(0);
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { register, user } = useAuth();
+  const { requestRegisterOtp, verifyRegisterOtp, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (user) navigate('/dashboard', { replace: true });
   }, [user]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setSecondsLeft(otpExpiresAt ? Math.max(Math.floor((otpExpiresAt - now) / 1000), 0) : 0);
+      setResendSecondsLeft(resendAt ? Math.max(Math.floor((resendAt - now) / 1000), 0) : 0);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [otpExpiresAt, resendAt]);
+
+  useEffect(() => {
+    if (otpSent && otpExpiresAt && Date.now() >= otpExpiresAt) {
+      setError('OTP expired. Please resend OTP.');
+    }
+  }, [otpSent, otpExpiresAt, secondsLeft]);
 
   const pwStrength = (pw) => {
     let s = 0;
@@ -32,17 +53,52 @@ export default function Register() {
 
   const handle = async (e) => {
     e.preventDefault();
-    if (form.password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
     setError('');
     setLoading(true);
     try {
-      await register(form.name, form.email, form.password);
-      toast.success('Account created! Welcome to NCET Papers 🎓');
+      if (!otpSent) {
+        if (!form.name.trim() || !form.email.trim() || !form.password) {
+          setError('Name, email and password are required');
+          setLoading(false);
+          return;
+        }
+        if (form.password.length < 6) {
+          setError('Password must be at least 6 characters');
+          setLoading(false);
+          return;
+        }
+        const data = await requestRegisterOtp(form.name, form.email, form.password);
+        setOtpSent(true);
+        const ttl = Number(data?.expiresInSeconds || 600);
+        const resendWait = Number(data?.resendAfterSeconds || 60);
+        const now = Date.now();
+        setOtpExpiresAt(now + ttl * 1000);
+        setResendAt(now + resendWait * 1000);
+        setSecondsLeft(ttl);
+        setResendSecondsLeft(resendWait);
+        setError('');
+        if (data?.devOtp) {
+          toast.success(`Email SMTP not configured. Use this OTP for now: ${data.devOtp}`, { duration: 9000 });
+        } else {
+          toast.success('OTP sent to your email');
+        }
+      } else {
+        if (secondsLeft <= 0) {
+          setError('OTP expired. Please resend OTP.');
+          setLoading(false);
+          return;
+        }
+        if (!otp.trim()) {
+          setError('Please enter OTP');
+          setLoading(false);
+          return;
+        }
+        await verifyRegisterOtp(form.email, otp.trim());
+        toast.success('Email verified. Account created! 🎓');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Registration failed. Please try again.');
+    } finally {
       setLoading(false);
     }
   };
@@ -66,71 +122,92 @@ export default function Register() {
         )}
 
         <form onSubmit={handle}>
-          <div className="form-group">
-            <label className="form-label">Full Name</label>
-            <div style={{ position: 'relative' }}>
-              <User size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+          {!otpSent && (
+            <>
+              <div className="form-group">
+                <label className="form-label">Full Name</label>
+                <div style={{ position: 'relative' }}>
+                  <User size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    type="text"
+                    className="form-control"
+                    style={{ paddingLeft: '2.5rem' }}
+                    placeholder="Your full name"
+                    value={form.name}
+                    onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                    required
+                    autoComplete="name"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Email Address</label>
+                <div style={{ position: 'relative' }}>
+                  <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    type="email"
+                    className="form-control"
+                    style={{ paddingLeft: '2.5rem' }}
+                    placeholder="your@email.com"
+                    value={form.email}
+                    onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                    required
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Password</label>
+                <div style={{ position: 'relative' }}>
+                  <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    type={showPw ? 'text' : 'password'}
+                    className="form-control"
+                    style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
+                    placeholder="Min. 6 characters"
+                    value={form.password}
+                    onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                    required
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw(p => !p)}
+                    style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
+                  >
+                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {form.password && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
+                      {[1, 2, 3, 4].map(i => (
+                        <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= strength ? strengthColors[strength] : 'var(--border)', transition: 'all 0.2s' }} />
+                      ))}
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: strengthColors[strength] }}>{strengthLabels[strength]}</span>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {otpSent && (
+            <div className="form-group">
+              <label className="form-label">Enter OTP sent to {form.email}</label>
               <input
                 type="text"
                 className="form-control"
-                style={{ paddingLeft: '2.5rem' }}
-                placeholder="Your full name"
-                value={form.name}
-                onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                placeholder="6-digit OTP"
+                value={otp}
+                onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 required
-                autoComplete="name"
               />
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Email Address</label>
-            <div style={{ position: 'relative' }}>
-              <Mail size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-              <input
-                type="email"
-                className="form-control"
-                style={{ paddingLeft: '2.5rem' }}
-                placeholder="your@email.com"
-                value={form.email}
-                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                required
-                autoComplete="email"
-              />
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <div style={{ position: 'relative' }}>
-              <Lock size={16} style={{ position: 'absolute', left: '0.9rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
-              <input
-                type={showPw ? 'text' : 'password'}
-                className="form-control"
-                style={{ paddingLeft: '2.5rem', paddingRight: '2.5rem' }}
-                placeholder="Min. 6 characters"
-                value={form.password}
-                onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                required
-                autoComplete="new-password"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPw(p => !p)}
-                style={{ position: 'absolute', right: '0.9rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.25rem' }}
-              >
-                {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-            {form.password && (
-              <div style={{ marginTop: '0.5rem' }}>
-                <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
-                  {[1, 2, 3, 4].map(i => (
-                    <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= strength ? strengthColors[strength] : 'var(--border)', transition: 'all 0.2s' }} />
-                  ))}
-                </div>
-                <span style={{ fontSize: '0.75rem', color: strengthColors[strength] }}>{strengthLabels[strength]}</span>
+              <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Check your inbox and spam folder. OTP expires in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}.
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           <div style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
             {['Access all previous year papers', 'AI-powered question predictions', 'Share anonymous notes'].map((b, i) => (
@@ -146,8 +223,45 @@ export default function Register() {
             style={{ width: '100%', justifyContent: 'center', padding: '0.8rem' }}
             disabled={loading}
           >
-            {loading ? 'Creating Account...' : <><span>Create Account</span> <ArrowRight size={16} /></>}
+            {loading ? (otpSent ? 'Verifying OTP...' : 'Sending OTP...') : <><span>{otpSent ? 'Verify OTP & Create Account' : 'Send OTP'}</span> <ArrowRight size={16} /></>}
           </button>
+
+          {otpSent && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', justifyContent: 'center', padding: '0.75rem', marginTop: '0.6rem' }}
+              disabled={loading}
+              onClick={async () => {
+                if (resendSecondsLeft > 0) return;
+                setError('');
+                setLoading(true);
+                try {
+                  const data = await requestRegisterOtp(form.name, form.email, form.password);
+                  const ttl = Number(data?.expiresInSeconds || 600);
+                  const resendWait = Number(data?.resendAfterSeconds || 60);
+                  const now = Date.now();
+                  setOtpExpiresAt(now + ttl * 1000);
+                  setResendAt(now + resendWait * 1000);
+                  setSecondsLeft(ttl);
+                  setResendSecondsLeft(resendWait);
+                  setOtp('');
+                  setError('');
+                  if (data?.devOtp) {
+                    toast.success(`Email SMTP not configured. Use this OTP for now: ${data.devOtp}`, { duration: 9000 });
+                  } else {
+                    toast.success('OTP resent');
+                  }
+                } catch (err) {
+                  setError(err.response?.data?.error || 'Failed to resend OTP');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              {resendSecondsLeft > 0 ? `Resend OTP in ${resendSecondsLeft}s` : 'Resend OTP'}
+            </button>
+          )}
         </form>
 
         <p className="auth-footer">

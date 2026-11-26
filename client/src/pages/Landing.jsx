@@ -1,14 +1,15 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { GraduationCap, BookOpen, Brain, FileText, StickyNote, Upload, ChevronDown, Sparkles, ArrowRight, Star } from 'lucide-react';
+import CyberHero from '../components/CyberHero';
 
 const features = [
   { icon: '📚', title: 'Organized Paper Library', desc: 'Browse previous year papers sorted by semester, branch, subject and exam type — all in one place.' },
   { icon: '🤖', title: 'AI Question Predictor', desc: 'Our AI analyzes years of question papers to predict the most important and frequently repeated questions.' },
   { icon: '📎', title: 'Multi-File Upload', desc: 'Upload 5-10 images or PDFs per paper. View them in a beautiful gallery with a built-in viewer.' },
-  { icon: '🗂️', title: 'Smart Sorting & Filter', desc: 'Filter by semester, branch, year, and exam type (IUT-1, IUT-2, ESE) instantly.' },
+  { icon: '🗂️', title: 'Smart Sorting & Filter', desc: 'Filter by semester, branch, year, and exam type (IAT-1, IAT-2, SEE) instantly.' },
   { icon: '📝', title: 'Anonymous Notes', desc: 'Share notes and tips with your batch anonymously. No login required for reading.' },
-  { icon: '⚡', title: 'Exam-Type Insights', desc: 'AI segregates predictions by IUT-1, IUT-2 and ESE — exactly what you need for each exam.' },
+  { icon: '⚡', title: 'Exam-Type Insights', desc: 'AI segregates predictions by IAT-1, IAT-2 and SEE — exactly what you need for each exam.' },
 ];
 
 const FV = (props) => (
@@ -25,42 +26,7 @@ export default function Landing() {
   return (
     <div className="landing">
       {/* HERO */}
-      <section className="hero">
-        <div className="hero-bg">
-          <div className="hero-orb hero-orb-1" />
-          <div className="hero-orb hero-orb-2" />
-          <div className="hero-orb hero-orb-3" />
-        </div>
-        <div className="hero-content">
-          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <div className="hero-badge">
-              <Sparkles size={13} /> AI-Powered Question Paper Analysis
-            </div>
-          </motion.div>
-
-          <motion.h1 className="hero-title" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }}>
-            Ace Your Exams with<br /><span className="gradient-text">NCET Paper Tracker</span>
-          </motion.h1>
-
-          <motion.p className="hero-desc" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.2 }}>
-            Access all previous year question papers, get AI-powered predictions for important questions, and collaborate with your batch — all in one beautiful platform.
-          </motion.p>
-
-          <motion.div className="hero-cta" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.3 }}>
-            <Link to="/register" className="btn btn-primary btn-lg">
-              Get Started Free <ArrowRight size={18} />
-            </Link>
-            <Link to="/login" className="btn btn-ghost btn-lg">
-              Sign In
-            </Link>
-          </motion.div>
-
-          <motion.div className="hero-scroll" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}>
-            <ChevronDown size={20} />
-            <span>Scroll to explore</span>
-          </motion.div>
-        </div>
-      </section>
+      <CyberHero />
 
       {/* STATS */}
       <section className="stats-strip">
@@ -119,10 +85,10 @@ export default function Landing() {
                   Your Personal <span className="gradient-text">Exam AI</span> Advisor
                 </h2>
                 <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginBottom: '1.5rem' }}>
-                  Ask questions about any subject. Get predictions for IUT-1, IUT-2, and ESE exams. The AI analyzes years of question patterns and your syllabus to tell you exactly what to focus on.
+                  Ask questions about any subject. Get predictions for IAT-1, IAT-2, and SEE exams. The AI analyzes years of question patterns and your syllabus to tell you exactly what to focus on.
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  {['IUT-1 & IUT-2 specific question predictions', 'Most repeated topics across years', 'High-weightage concepts to prioritize', 'Expected questions for current year'].map((p, i) => (
+                  {['IAT-1 & IAT-2 specific question predictions', 'Most repeated topics across years', 'High-weightage concepts to prioritize', 'Expected questions for current year'].map((p, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                       <Star size={14} style={{ color: '#6366f1', flexShrink: 0 }} /> {p}
                     </div>
@@ -136,8 +102,8 @@ export default function Landing() {
                   {['#ff5f57','#febc2e','#28c840'].map((c,i) => <div key={i} style={{ width: 12, height: 12, borderRadius: '50%', background: c }} />)}
                 </div>
                 {[
-                  { role: 'user', text: 'What are the most important topics for DBMS IUT-1?' },
-                  { role: 'ai', text: '🎯 Based on pattern analysis:\n\n**IUT-1 Top Topics:**\n• ER Diagrams & Normalization (appears in 90% of papers)\n• SQL Queries - Joins, Subqueries\n• ACID Properties & Transactions\n\n**Predicted Question:** "Explain 3NF with example and normalize the given relation."' },
+                  { role: 'user', text: 'What are the most important topics for DBMS IAT-1?' },
+                  { role: 'ai', text: '🎯 Based on pattern analysis:\n\n**IAT-1 Top Topics:**\n• ER Diagrams & Normalization (appears in 90% of papers)\n• SQL Queries - Joins, Subqueries\n• ACID Properties & Transactions\n\n**Predicted Question:** "Explain 3NF with example and normalize the given relation."' },
                 ].map((m, i) => (
                   <div key={i} style={{ marginBottom: '0.75rem' }}>
                     <div style={{ fontSize: '0.7rem', color: m.role === 'ai' ? '#6366f1' : '#94a3b8', marginBottom: '0.2rem' }}>
