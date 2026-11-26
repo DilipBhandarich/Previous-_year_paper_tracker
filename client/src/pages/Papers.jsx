@@ -203,7 +203,7 @@ export default function Papers() {
       const fd = new FormData();
       Object.entries(form).forEach(([k,v]) => { if (v) fd.append(k, v); });
       files.forEach((item, i) => fd.append(`files_${i}`, item.file));
-      const { data } = await axios.post('/api/papers', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await axios.post('/api/papers', fd);
       setPapers(p => [data, ...p]);
       closeUploadModal();
       setForm({ subject_id: '', year: new Date().getFullYear(), exam_type: 'IAT-1', title: '', description: '' });
