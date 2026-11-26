@@ -333,6 +333,58 @@ async function storeFile(file) {
   return { filename: localName, file_url: `/uploads/${localName}` };
 }
 
+function storagePathUrl(pathname) {
+  return String(pathname)
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function validateUploadMetadata(file) {
+  const originalName = String(file?.name || file?.original_name || "file").trim().slice(0, 255);
+  const fileType = String(file?.type || file?.file_type || "").toLowerCase();
+  const extension = path.extname(originalName).toLowerCase();
+  const validExtension = /\.(jpeg|jpg|png|gif|webp|pdf)$/i.test(extension);
+  const validType = /^(image\/(jpeg|jpg|png|gif|webp)|application\/pdf)$/.test(fileType);
+  const fileSize = Number(file?.size || file?.file_size || 0);
+  if (!originalName || !validExtension || !validType || !Number.isFinite(fileSize) || fileSize <= 0 || fileSize > 20 * 1024 * 1024) {
+    throw new Error("Unsupported or oversized file");
+  }
+  return { originalName, fileType, fileSize };
+}
+
+async function createSignedUpload(file) {
+  if (!hasObjectStorage) throw new Error("Supabase Storage is not configured for production uploads");
+  const { originalName, fileType, fileSize } = validateUploadMetadata(file);
+  const objectPath = `papers/${crypto.randomUUID()}-${safeFileName(originalName)}`;
+  const signedPath = `${encodeURIComponent(storageBucket)}/${storagePathUrl(objectPath)}`;
+  const response = await fetch(
+    `${storageUrl}/storage/v1/object/upload/sign/${signedPath}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${storageKey}`,
+        apikey: storageKey,
+        "Content-Type": "application/json",
+      },
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Storage signing failed (${response.status}): ${detail}`);
+  }
+  const signed = await response.json();
+  if (!signed.token) throw new Error("Storage did not return an upload token");
+  return {
+    filename: objectPath,
+    original_name: originalName,
+    file_type: fileType,
+    file_size: fileSize,
+    upload_url: `${storageUrl}/storage/v1/object/upload/sign/${signedPath}?token=${encodeURIComponent(signed.token)}`,
+    file_url: `${storageUrl}/storage/v1/object/public/${storageBucket}/${objectPath}`,
+  };
+}
+
 async function removeStoredFile(filename) {
   if (!filename) return;
   if (hasObjectStorage && String(filename).startsWith("papers/")) {
@@ -631,6 +683,20 @@ app.get("/api/subjects/:id", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: "Unable to load subject" }); }
 });
 
+app.post("/api/papers/upload-urls", auth, async (req, res) => {
+  try {
+    const files = Array.isArray(req.body.files) ? req.body.files : [];
+    if (!files.length) return res.status(400).json({ error: "At least one file is required" });
+    if (files.length > 10) return res.status(400).json({ error: "You can upload up to 10 files" });
+    const uploads = [];
+    for (const file of files) uploads.push(await createSignedUpload(file));
+    return res.json({ uploads });
+  } catch (err) {
+    console.error("Upload URL error:", err.message);
+    return res.status(err.message.includes("not configured") ? 503 : 400).json({ error: err.message });
+  }
+});
+
 app.post("/api/subjects", auth, async (req, res) => {
   try {
     const { name, code, semester, branch, description } = req.body;
@@ -717,26 +783,53 @@ async function insertPaperFiles(client, paperId, files) {
   return stored;
 }
 
+async function insertPaperFileMetadata(client, paperId, files) {
+  const stored = [];
+  for (const file of files) {
+    const filename = String(file.filename || "");
+    if (!filename.startsWith("papers/") || filename.includes("..")) throw new Error("Invalid uploaded file path");
+    const originalName = String(file.original_name || "file").slice(0, 255);
+    const fileType = String(file.file_type || "application/octet-stream");
+    const fileSize = Number(file.file_size || 0);
+    const fileUrl = hasObjectStorage
+      ? `${storageUrl}/storage/v1/object/public/${storageBucket}/${filename}`
+      : `/uploads/${path.basename(filename)}`;
+    const { rows } = await client.query(
+      `INSERT INTO paper_files (paper_id,filename,original_name,file_type,file_size,file_url)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [paperId, filename, originalName, fileType, fileSize, fileUrl],
+    );
+    stored.push(rows[0]);
+  }
+  return stored;
+}
+
 app.post("/api/papers", auth, upload.any(), async (req, res) => {
   const client = await pool.connect();
   const files = parseFiles(req);
+  const metadataFiles = Array.isArray(req.body.files) ? req.body.files : [];
+  const storedMetadata = metadataFiles.map((file) => ({ filename: file.filename }));
   try {
     const subjectId = intParam(req.body.subject_id);
     const year = intParam(req.body.year);
     if (!subjectId || !year) return res.status(400).json({ error: "subject_id and year required" });
-    if (!files.length) return res.status(400).json({ error: "At least one file is required" });
-    if (!files.some((file) => String(file.mimetype).startsWith("image/"))) return res.status(400).json({ error: "At least one image file is required" });
+    if (!files.length && !metadataFiles.length) return res.status(400).json({ error: "At least one file is required" });
+    if (!files.length && !metadataFiles.some((file) => String(file.file_type || "").startsWith("image/"))) return res.status(400).json({ error: "At least one image file is required" });
+    if (files.length && !files.some((file) => String(file.mimetype).startsWith("image/"))) return res.status(400).json({ error: "At least one image file is required" });
     await client.query("BEGIN");
     const { rows } = await client.query(
       `INSERT INTO papers (subject_id,year,exam_type,title,description,created_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [subjectId, year, req.body.exam_type || "Annual", req.body.title || null, req.body.description || null, req.user.id],
     );
-    const paperFiles = await insertPaperFiles(client, rows[0].id, files);
+    const paperFiles = files.length
+      ? await insertPaperFiles(client, rows[0].id, files)
+      : await insertPaperFileMetadata(client, rows[0].id, metadataFiles);
     await client.query("COMMIT");
     return res.status(201).json({ ...rows[0], files: paperFiles });
   } catch (err) {
     try { await client.query("ROLLBACK"); } catch (_) {}
+    await Promise.allSettled(storedMetadata.map((file) => removeStoredFile(file.filename)));
     console.error("Paper upload error:", err.message);
     return res.status(500).json({ error: "Unable to upload paper" });
   } finally { client.release(); }

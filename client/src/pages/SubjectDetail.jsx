@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Brain, Send, Upload, Plus, Trash2, Eye, Bot, Sparkles, ChevronDown, ChevronUp, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { uploadPaperFiles } from '../utils/uploadPaperFiles';
 
 const EXAM_TYPES = ['IAT-1', 'IAT-2', 'SEE', 'Annual', 'Supplementary'];
 const EXAM_COLORS = { 'IAT-1': 'badge-indigo', 'IAT-2': 'badge-violet', 'SEE': 'badge-cyan', 'Annual': 'badge-green', 'Supplementary': 'badge-yellow' };
@@ -335,11 +336,8 @@ export default function SubjectDetail() {
         setUploading(false);
         return;
       }
-      const fd = new FormData();
-      fd.append('subject_id', id);
-      Object.entries(uploadForm).forEach(([k,v]) => { if (v) fd.append(k, v); });
-      uploadFiles.forEach((item, i) => fd.append(`files_${i}`, item.file));
-      const { data } = await axios.post('/api/papers', fd);
+      const files = await uploadPaperFiles(uploadFiles.map((item) => item.file));
+      const { data } = await axios.post('/api/papers', { ...uploadForm, subject_id: id, files });
       setSubject(p => ({ ...p, papers: [data, ...(p.papers || [])] }));
       closeUploadModal();
       setUploadForm({ year: new Date().getFullYear(), exam_type: 'IAT-1', title: '', description: '' });

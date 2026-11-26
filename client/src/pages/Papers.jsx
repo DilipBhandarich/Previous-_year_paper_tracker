@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import axios from 'axios';
+import { uploadPaperFiles } from '../utils/uploadPaperFiles';
 import { useAuth } from '../context/AuthContext';
 import { Plus, Search, X, Upload, FileText, Image, Eye, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -200,10 +201,8 @@ export default function Papers() {
         setSaving(false);
         return;
       }
-      const fd = new FormData();
-      Object.entries(form).forEach(([k,v]) => { if (v) fd.append(k, v); });
-      files.forEach((item, i) => fd.append(`files_${i}`, item.file));
-      const { data } = await axios.post('/api/papers', fd);
+      const uploadedFiles = await uploadPaperFiles(files.map((item) => item.file));
+      const { data } = await axios.post('/api/papers', { ...form, files: uploadedFiles });
       setPapers(p => [data, ...p]);
       closeUploadModal();
       setForm({ subject_id: '', year: new Date().getFullYear(), exam_type: 'IAT-1', title: '', description: '' });
