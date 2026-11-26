@@ -5,7 +5,6 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { ArrowLeft, Brain, Send, Upload, Plus, Trash2, Eye, Bot, Sparkles, ChevronDown, ChevronUp, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { downloadImagesAsPdf } from '../utils/downloadImagesPdf';
 
 const EXAM_TYPES = ['IAT-1', 'IAT-2', 'SEE', 'Annual', 'Supplementary'];
 const EXAM_COLORS = { 'IAT-1': 'badge-indigo', 'IAT-2': 'badge-violet', 'SEE': 'badge-cyan', 'Annual': 'badge-green', 'Supplementary': 'badge-yellow' };
@@ -144,6 +143,7 @@ function FileViewer({ files, onClose }) {
   const handleDownloadImagesPdf = async () => {
     setDownloadingPdf(true);
     try {
+      const { downloadImagesAsPdf } = await import('../utils/downloadImagesPdf');
       await downloadImagesAsPdf(normalizedFiles, 'paper-images');
       toast.success('Downloaded all images as PDF');
     } catch (err) {

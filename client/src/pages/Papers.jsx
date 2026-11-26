@@ -5,7 +5,6 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Plus, Search, X, Upload, FileText, Image, Eye, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { downloadImagesAsPdf } from '../utils/downloadImagesPdf';
 
 const EXAM_TYPES = ['IAT-1', 'IAT-2', 'SEE', 'Annual', 'Supplementary'];
 const BRANCHES = ['Common', 'CSE', 'ECE', 'ME', 'CIVIL', 'EEE'];
@@ -68,6 +67,7 @@ function FileViewer({ paper, onClose }) {
       const safeExam = String(paper.exam_type || 'paper').replace(/[^a-zA-Z0-9_-]+/g, '-');
       const safeYear = String(paper.year || 'year');
       const safeSubject = String(paper.subject_code || paper.subject_name || 'subject').replace(/[^a-zA-Z0-9_-]+/g, '-');
+      const { downloadImagesAsPdf } = await import('../utils/downloadImagesPdf');
       await downloadImagesAsPdf(files, `${safeSubject}-${safeExam}-${safeYear}`);
       toast.success('Downloaded all images as PDF');
     } catch (err) {
